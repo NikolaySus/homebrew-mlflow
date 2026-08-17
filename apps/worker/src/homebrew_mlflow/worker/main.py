@@ -48,6 +48,9 @@ def run() -> None:
     platform_url = os.environ["HOMEBREW_MLFLOW_PUBLIC_BASE_URL"]
     dvc_remote = os.environ["HOMEBREW_MLFLOW_DVC_REMOTE_BASE_URL"]
     s3_endpoint = os.environ["HOMEBREW_MLFLOW_S3_ENDPOINT_URL"]
+    s3_public_endpoint = os.getenv(
+        "HOMEBREW_MLFLOW_S3_PUBLIC_ENDPOINT_URL", s3_endpoint
+    )
     s3_bucket = os.environ.get("HOMEBREW_MLFLOW_DVC_BUCKET", "research")
     attachment_bucket = os.environ.get("HOMEBREW_MLFLOW_ATTACHMENT_BUCKET", "homebrew-mlflow")
     s3_access_key = os.environ["HOMEBREW_MLFLOW_S3_ACCESS_KEY_ID"]
@@ -133,7 +136,7 @@ def run() -> None:
                 template,
                 platform_url=platform_url,
                 dvc_remote_base_url=dvc_remote,
-                s3_endpoint_url=s3_endpoint,
+                s3_endpoint_url=s3_public_endpoint,
             )
             worked = coordinator.run_once(worker_id)
         if (
