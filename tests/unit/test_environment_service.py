@@ -68,15 +68,17 @@ def test_environment_document_is_canonical_hashed_and_audited() -> None:
         store.actor,
         store.project,
         "training",
-        EnvironmentKind.PIP,
-        {"python": "3.12", "packages": ["torch==2.8.0"]},
+        EnvironmentKind.UV,
+        {"python": "3.12", "lockfile": "uv.lock", "lock_sha256": "a" * 64},
         PublicId.generate(ResourceKind.REQUEST),
         NOW,
     )
 
-    assert value.canonical_document == '{"packages":["torch==2.8.0"],"python":"3.12"}'
+    assert value.canonical_document == (
+        '{"lock_sha256":"' + "a" * 64 + '","lockfile":"uv.lock","python":"3.12"}'
+    )
     assert len(value.sha256) == 64
-    assert store.audits[0].safe_metadata == {"kind": "pip", "sha256": value.sha256}
+    assert store.audits[0].safe_metadata == {"kind": "uv", "sha256": value.sha256}
 
 
 def test_environment_rejects_secrets_and_duplicate_names() -> None:

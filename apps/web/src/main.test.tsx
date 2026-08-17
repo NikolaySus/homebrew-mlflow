@@ -166,5 +166,9 @@ describe("project onboarding", () => {
 
     await screen.findByRole("link", { name: "Open in GitLab" });
     expect(screen.getByText("git@git.example:research/protein-folding.git")).not.toBeNull();
+    expect(screen.getByRole<HTMLOptionElement>("option", { name: "uv" }).selected).toBe(
+      true,
+    );
+    expect(screen.getByText(/not the local virtual-environment directory/)).not.toBeNull();
   });
 });

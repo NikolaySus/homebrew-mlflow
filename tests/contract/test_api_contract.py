@@ -90,6 +90,20 @@ def test_openapi_endpoint_serves_canonical_contract() -> None:
     assert response.json()["openapi"] == "3.2.0"
 
 
+def test_uv_is_a_first_class_environment_kind() -> None:
+    schemas = load_openapi()["components"]["schemas"]
+    assert schemas["CreateEnvironmentSpecificationRequest"]["properties"]["kind"][
+        "enum"
+    ] == ["uv", "pip", "conda", "container", "system"]
+    assert schemas["EnvironmentSpecificationResponse"]["properties"]["kind"]["enum"] == [
+        "uv",
+        "pip",
+        "conda",
+        "container",
+        "system",
+    ]
+
+
 def test_swagger_ui_is_read_only() -> None:
     response = TestClient(create_app()).get("/docs")
 

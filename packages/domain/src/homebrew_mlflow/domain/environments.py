@@ -8,6 +8,7 @@ from .identifiers import PublicId, ResourceKind
 
 
 class EnvironmentKind(StrEnum):
+    UV = "uv"
     PIP = "pip"
     CONDA = "conda"
     CONTAINER = "container"

@@ -140,7 +140,7 @@ type EnvironmentSpecification = {
   id: string;
   project_id: string;
   name: string;
-  kind: "pip" | "conda" | "container" | "system";
+  kind: "uv" | "pip" | "conda" | "container" | "system";
   document: Record<string, unknown>;
   sha256: string;
   created_at: string;
@@ -1260,15 +1260,25 @@ export function App() {
                       </article>
                     ))}
                   </div>
+                  <p className="hint">
+                    The name identifies this immutable platform snapshot, not the
+                    local virtual-environment directory. For uv, <code>.venv</code>{" "}
+                    is normally the local directory; use a snapshot label such as{" "}
+                    <code>default-2026-08-17</code> here.
+                  </p>
                   <form className="stackForm" onSubmit={createEnvironment}>
-                    <input name="name" placeholder="Environment name" required />
+                    <input
+                      name="name"
+                      placeholder="Snapshot name, e.g. default-2026-08-17"
+                      required
+                    />
                     <select name="kind">
-                      <option>pip</option><option>conda</option>
+                      <option>uv</option><option>pip</option><option>conda</option>
                       <option>container</option><option>system</option>
                     </select>
                     <textarea
                       name="document"
-                      placeholder={'{"python":"3.12","packages":["torch==2.8.0"]}'}
+                      placeholder={'{"python":"3.12","lockfile":"uv.lock","lock_sha256":"..."}'}
                       required
                     />
                     <button>Register environment</button>

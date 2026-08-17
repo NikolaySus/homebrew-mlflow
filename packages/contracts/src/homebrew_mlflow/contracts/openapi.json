@@ -817,7 +817,7 @@
         "required": ["name", "kind", "document"],
         "properties": {
           "name": {"type": "string", "minLength": 1, "maxLength": 200},
-          "kind": {"type": "string", "enum": ["pip", "conda", "container", "system"]},
+          "kind": {"type": "string", "enum": ["uv", "pip", "conda", "container", "system"]},
           "document": {"type": "object", "additionalProperties": true, "description": "Secret-free, canonicalized environment metadata."}
         }
       },
@@ -828,7 +828,7 @@
           "id": {"type": "string", "pattern": "^env_[0-9A-HJKMNP-TV-Z]{26}$"},
           "project_id": {"type": "string"},
           "name": {"type": "string"},
-          "kind": {"type": "string", "enum": ["pip", "conda", "container", "system"]},
+          "kind": {"type": "string", "enum": ["uv", "pip", "conda", "container", "system"]},
           "document": {"type": "object", "additionalProperties": true},
           "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
           "created_at": {"type": "string", "format": "date-time"},
