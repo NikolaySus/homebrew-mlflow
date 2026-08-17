@@ -129,6 +129,45 @@ def login(
 
 
 @app.command()
+def claim_installation(
+    organization_name: Annotated[
+        str, typer.Option("--organization", help="Initial organization name")
+    ],
+    bootstrap_token: Annotated[
+        str,
+        typer.Option(
+            "--bootstrap-token",
+            prompt="Bootstrap token",
+            hide_input=True,
+            help="One-time installation token; omit the option to enter it securely",
+        ),
+    ],
+    server: Annotated[str | None, typer.Option("--server")] = None,
+) -> None:
+    """Claim a new installation for the authenticated administrator."""
+    configured = server or _configured_server()
+    if configured is None:
+        raise typer.BadParameter("configure a server with login --server first")
+    normalized = configured.rstrip("/")
+    with httpx.Client(timeout=15) as client:
+        session = _refresh_session(client, normalized)
+        response = client.post(
+            f"{normalized}/api/v1/setup/claim",
+            headers={"Authorization": f"Bearer {session['access_token']}"},
+            json={
+                "organization_name": organization_name,
+                "bootstrap_token": bootstrap_token,
+            },
+        )
+        response.raise_for_status()
+    payload = response.json()
+    typer.echo(
+        f"Installation claimed; organization={payload['organization_id']}, "
+        f"role={payload['role']}."
+    )
+
+
+@app.command()
 def doctor(
     server: Annotated[str | None, typer.Option("--server")] = None,
 ) -> None:
