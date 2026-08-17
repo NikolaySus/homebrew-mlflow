@@ -1224,6 +1224,9 @@ class SqlAlchemySetupStore:
                 archived_at=None,
             )
         )
+        # The rows below reference this organization, but the persistence
+        # model intentionally has no ORM relationships to order the inserts.
+        self._session.flush()
         self._session.add(
             OrganizationMembershipRow(
                 organization_id=organization_key,

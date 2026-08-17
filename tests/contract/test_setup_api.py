@@ -63,6 +63,8 @@ def test_authenticated_user_claims_installation_once(monkeypatch) -> None:  # ty
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
+    with engine.connect() as connection:
+        connection.exec_driver_sql("PRAGMA foreign_keys=ON")
     Base.metadata.create_all(engine)
     principal = Principal.create(PrincipalKind.HUMAN, "Administrator")
     now = datetime.now(UTC)
