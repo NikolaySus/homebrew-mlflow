@@ -1,8 +1,10 @@
 # Backup and restore runbook
 
-The production policy is a daily off-host S3 backup (RPO 24 hours), an eight-hour recovery target,
-and a production-like restore drill every quarter. A backup is not considered restorable until
-`latest-complete` is written after PostgreSQL, GitLab, Infisical, and both owned object buckets finish.
+Backup automation is opt-in and disabled by default: this repository does not install a timer or
+cron job. When an operator enables backups, the production policy is a daily off-host S3 backup
+(RPO 24 hours), an eight-hour recovery target, and a production-like restore drill every quarter.
+A backup is not considered restorable until `latest-complete` is written after PostgreSQL, GitLab,
+Infisical, and both owned object buckets finish.
 
 Run `deploy/backup/backup.sh` daily from a locked-down host timer with the `BACKUP_S3_*` variables
 provided by the operational secret manager. The account must be limited to the configured backup
