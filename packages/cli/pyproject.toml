@@ -1,6 +1,6 @@
 [project]
 name = "homebrew-mlflow"
-version = "0.1.2"
+version = "0.2.0"
 description = "Credential and local-run helper for Homebrew MLflow"
 requires-python = ">=3.11"
 dependencies = [

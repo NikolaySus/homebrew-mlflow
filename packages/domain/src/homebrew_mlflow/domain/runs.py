@@ -160,6 +160,8 @@ class Run:
         finalization_digest: str,
         git_commit_sha: str | None,
         evidence: dict[str, Any],
+        pipeline_version_id: PublicId | None = None,
+        environment_specification_id: PublicId | None = None,
     ) -> Run:
         if target not in {RunState.SUCCEEDED, RunState.FAILED, RunState.INTERRUPTED}:
             raise InvalidRunTransition("Run finalization requires a completed terminal state")
@@ -171,4 +173,8 @@ class Run:
             finalization_digest=finalization_digest,
             git_commit_sha=git_commit_sha,
             finalization_evidence=evidence,
+            pipeline_version_id=pipeline_version_id or self.pipeline_version_id,
+            environment_specification_id=(
+                environment_specification_id or self.environment_specification_id
+            ),
         )

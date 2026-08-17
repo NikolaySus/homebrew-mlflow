@@ -1,5 +1,6 @@
 {
   "server": "{{ platform_url }}",
   "project_id": "{{ project_id }}",
-  "repository_id": "{{ repository_id }}"
+  "repository_id": "{{ repository_id }}",
+  "template_version": 2
 }

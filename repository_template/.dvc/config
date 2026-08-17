@@ -3,4 +3,4 @@
 ['remote "platform"']
     url = {{ dvc_remote_url }}
     endpointurl = {{ s3_endpoint_url }}
-    profile = homebrew-mlflow
+    profile = homebrew-mlflow-{{ project_id }}

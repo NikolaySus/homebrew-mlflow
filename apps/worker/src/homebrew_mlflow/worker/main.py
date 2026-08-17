@@ -18,6 +18,7 @@ from homebrew_mlflow.infrastructure import (
     GitLabNamespaceHost,
     GitLabRepositoryHost,
     InfisicalMembershipReconciler,
+    InfisicalProjectProvisioner,
     S3RetentionCoordinator,
     SqlAlchemyProvisioningStore,
     SqlAlchemyPublicationUnitOfWork,
@@ -96,6 +97,9 @@ def run() -> None:
             recovered = RunService(SqlAlchemyRunUnitOfWork(session)).recover_incomplete(
                 datetime.now(UTC), heartbeat_timeout
             )
+            secrets_provisioned = InfisicalProjectProvisioner(
+                session, base_url=infisical_url, access_token=infisical_token
+            ).run_once(datetime.now(UTC))
             reconciled = InfisicalMembershipReconciler(
                 session, base_url=infisical_url, access_token=infisical_token
             ).run_once(datetime.now(UTC))
@@ -133,6 +137,7 @@ def run() -> None:
             worked = coordinator.run_once(worker_id)
         if (
             not worked
+            and not secrets_provisioned
             and not published
             and not reconciled
             and not gitlab_reconciled

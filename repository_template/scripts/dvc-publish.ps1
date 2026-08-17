@@ -22,12 +22,5 @@ if ($dirtyMetadata) {
     exit 3
 }
 
-$commitSha = (& git rev-parse HEAD).Trim()
-$upstreamSha = & git rev-parse '@{upstream}' 2> $null
-if ($LASTEXITCODE -ne 0 -or !$upstreamSha -or $upstreamSha.Trim() -ne $commitSha) {
-    [Console]::Error.WriteLine("error: the current commit must be pushed to its configured upstream")
-    exit 4
-}
-
-& homebrew-mlflow publication submit --commit-sha $commitSha @PublicationArguments
+& homebrew-mlflow publication submit @PublicationArguments
 exit $LASTEXITCODE

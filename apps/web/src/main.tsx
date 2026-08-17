@@ -562,6 +562,21 @@ export function App() {
     }
   }
 
+  async function createArtifact(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    try {
+      await request(`/api/v1/projects/${projectId}/artifacts`, {
+        method: "POST",
+        body: JSON.stringify({ name: data.get("name") }),
+      });
+      setArtifacts(await request(`/api/v1/projects/${projectId}/artifacts`));
+      event.currentTarget.reset();
+    } catch (value) {
+      showError(value);
+    }
+  }
+
   async function createGrant(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!version) return;
@@ -925,21 +940,6 @@ export function App() {
         <a className="primary" href="/api/v1/auth/web/start">
           Continue with GitLab
         </a>
-        <form
-          onSubmit={(event) => {
-            event.preventDefault();
-            setToken(String(new FormData(event.currentTarget).get("token")));
-          }}
-        >
-          <input
-            name="token"
-            type="password"
-            autoComplete="off"
-            placeholder="Temporary platform access token"
-            required
-          />
-          <button>Open catalog</button>
-        </form>
       </main>
     );
   if (setupClaimed === null)
@@ -1204,39 +1204,10 @@ export function App() {
                       </article>
                     ))}
                   </div>
-                  <form className="inlineForm" onSubmit={createPipeline}>
-                    <input name="name" placeholder="Pipeline name" required />
-                    <button>Create definition</button>
-                  </form>
-                  <form
-                    className="stackForm"
-                    onSubmit={registerPipelineVersion}
-                  >
-                    <select name="definition" required>
-                      {pipelines.map((item) => (
-                        <option value={item.id} key={item.id}>
-                          {item.name}
-                        </option>
-                      ))}
-                    </select>
-                    <select name="repository" required>
-                      {repositories
-                        .filter((item) => item.state === "active")
-                        .map((item) => (
-                          <option value={item.id} key={item.id}>
-                            {item.name}
-                          </option>
-                        ))}
-                    </select>
-                    <input
-                      name="commit"
-                      placeholder="Committed SHA-1"
-                      pattern="[0-9a-f]{40}"
-                      required
-                    />
-                    <input name="path" placeholder="dvc.yaml" required />
-                    <button>Register committed version</button>
-                  </form>
+                  <p className="hint">
+                    Pipeline definitions and immutable versions are discovered
+                    from committed <code>dvc.yaml</code> files when Runs finalize.
+                  </p>
                   {pipelineVersions.map((item) => (
                     <p key={item.id}>
                       <code>{item.id}</code> {item.pipeline_path} @{" "}
@@ -1261,28 +1232,11 @@ export function App() {
                     ))}
                   </div>
                   <p className="hint">
-                    The name identifies this immutable platform snapshot, not the
-                    local virtual-environment directory. For uv, <code>.venv</code>{" "}
-                    is normally the local directory; use a snapshot label such as{" "}
-                    <code>default-2026-08-17</code> here.
+                    Environment revisions are captured from the actual runtime
+                    and resolved automatically by <code>homebrew-mlflow run</code>.
+                    Configure the logical name and runtime kind in the tracked{" "}
+                    <code>homebrew-mlflow.toml</code> file.
                   </p>
-                  <form className="stackForm" onSubmit={createEnvironment}>
-                    <input
-                      name="name"
-                      placeholder="Snapshot name, e.g. default-2026-08-17"
-                      required
-                    />
-                    <select name="kind">
-                      <option>uv</option><option>pip</option><option>conda</option>
-                      <option>container</option><option>system</option>
-                    </select>
-                    <textarea
-                      name="document"
-                      placeholder={'{"python":"3.12","lockfile":"uv.lock","lock_sha256":"..."}'}
-                      required
-                    />
-                    <button>Register environment</button>
-                  </form>
                 </section>
                 <section className="command">
                   <p className="label">Native workflow</p>
@@ -1298,49 +1252,14 @@ export function App() {
               <>
                 <section>
                   <Title
-                    title="Create a local Run record"
+                    title="Runs"
                     count={runs.length}
                   />
-                  <form className="inlineForm" onSubmit={createRun}>
-                    <select name="repository" required>
-                      {repositories
-                        .filter((item) => item.state === "active")
-                        .map((item) => (
-                          <option value={item.id} key={item.id}>
-                            {item.name}
-                          </option>
-                        ))}
-                    </select>
-                    <select name="pipeline_version">
-                      <option value="">No pipeline version</option>
-                      {pipelineVersions
-                        .filter((item) => !item.archived_at)
-                        .map((item) => (
-                          <option value={item.id} key={item.id}>
-                            {item.pipeline_path} @ {item.git_commit_sha.slice(0, 8)}
-                          </option>
-                        ))}
-                    </select>
-                    <select name="environment">
-                      <option value="">No environment specification</option>
-                      {environments
-                        .filter((item) => !item.archived_at)
-                        .map((item) => (
-                          <option value={item.id} key={item.id}>{item.name}</option>
-                        ))}
-                    </select>
-                    <input
-                      name="experiment"
-                      placeholder="Experiment name"
-                      required
-                    />
-                    <input
-                      name="command"
-                      placeholder="python train.py --epochs 10"
-                      required
-                    />
-                    <button>Create</button>
-                  </form>
+                  <p className="hint">
+                    Start a Run from a repository with{" "}
+                    <code>homebrew-mlflow run --experiment &lt;name&gt; -- &lt;command&gt;</code>.
+                    The CLI performs runtime capture before it creates the record.
+                  </p>
                   <div className="split">
                     <div className="runList">
                       {runs.map((run) => (
@@ -1375,6 +1294,10 @@ export function App() {
               <>
                 <section>
                   <Title title="Artifact catalog" count={artifacts.length} />
+                  <form className="inlineForm" onSubmit={createArtifact}>
+                    <input name="name" placeholder="Artifact family name" required />
+                    <button>Create artifact family</button>
+                  </form>
                   <div className="artifactLayout">
                     <div className="artifactList">
                       {artifacts.map((artifact) => (
@@ -1448,62 +1371,10 @@ export function App() {
                       </div>
                     ))}
                   </div>
-                  <form className="inlineForm" onSubmit={createSharedReference}>
-                    <input name="artifact_version_id" placeholder="Shared av_…" required />
-                    <input name="run_id" placeholder="Optional consuming run_…" />
-                    <button>Create reference</button>
-                  </form>
-                  <form className="inlineForm" onSubmit={createDerivation}>
-                    <input name="source_version_id" placeholder="Source av_…" required />
-                    <input name="derived_version_id" placeholder="Derived av_…" required />
-                    <button>Record derivation</button>
-                  </form>
-                </section>
-                <section>
-                  <Title
-                    title="Publish committed DVC output"
-                    count={publicationLog.length}
-                  />
-                  <form className="stackForm" onSubmit={publish}>
-                    <select name="artifact" required>
-                      {artifacts.map((item) => (
-                        <option value={item.id} key={item.id}>
-                          {item.name}
-                        </option>
-                      ))}
-                    </select>
-                    <select name="repository" required>
-                      {repositories.map((item) => (
-                        <option value={item.id} key={item.id}>
-                          {item.name}
-                        </option>
-                      ))}
-                    </select>
-                    <input
-                      name="commit"
-                      placeholder="40-character Git commit SHA"
-                      pattern="[0-9a-f]{40}"
-                      required
-                    />
-                    <input
-                      name="output"
-                      placeholder="Declared output path"
-                      required
-                    />
-                    <input
-                      name="dvc_file"
-                      placeholder="Standalone .dvc file (or use pipeline fields)"
-                    />
-                    <input
-                      name="pipeline"
-                      placeholder="Pipeline file, e.g. dvc.yaml"
-                    />
-                    <input name="stage" placeholder="Pipeline stage" />
-                    <button>Validate and publish</button>
-                  </form>
-                  {publicationLog.length > 0 && (
-                    <pre className="eventLog">{publicationLog.join("\n")}</pre>
-                  )}
+                  <p className="hint">
+                    References and derivations are derived from Run inputs and
+                    published outputs instead of being entered as raw IDs.
+                  </p>
                 </section>
               </>
             )}
@@ -1542,11 +1413,13 @@ export function App() {
                     ))}
                   </div>
                   <form className="inlineForm" onSubmit={setMembership}>
-                    <input
-                      name="principal"
-                      placeholder="principal_…"
-                      required
-                    />
+                    <select name="principal" required>
+                      {organizationPrincipals.map((principal) => (
+                        <option key={principal.principal_id} value={principal.principal_id}>
+                          {principal.display_name} ({principal.gitlab_username ?? principal.principal_kind})
+                        </option>
+                      ))}
+                    </select>
                     <select name="role">
                       <option>viewer</option>
                       <option>contributor</option>
@@ -1657,30 +1530,10 @@ export function App() {
                       {secretContext.secret_path}
                     </p>
                   )}
-                  <form className="inlineForm" onSubmit={configureSecrets}>
-                    <input
-                      name="infisical_project_id"
-                      placeholder="Infisical project ID"
-                      defaultValue={secretContext?.infisical_project_id}
-                      required
-                    />
-                    <input
-                      name="environment_slug"
-                      placeholder="environment"
-                      defaultValue={secretContext?.environment_slug ?? "dev"}
-                      required
-                    />
-                    <input
-                      name="secret_path"
-                      placeholder="/experiments"
-                      defaultValue={secretContext?.secret_path ?? "/"}
-                      required
-                    />
-                    <button>Configure</button>
-                  </form>
                   <p className="hint">
-                    Only non-secret coordinates are stored here. Secret values
-                    stay in Infisical and are injected by its official CLI.
+                    The platform provisions this Infisical project automatically.
+                    Secret values stay in Infisical and are injected only when a
+                    Run explicitly enables <code>--secrets</code>.
                   </p>
                 </section>
                 <section>

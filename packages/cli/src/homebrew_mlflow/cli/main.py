@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import json
 import os
-import platform
 import re
 import secrets
 import shutil
 import subprocess
+import tempfile
 import threading
 import time
 import unicodedata
@@ -21,6 +21,8 @@ from packaging.specifiers import SpecifierSet
 from packaging.version import Version
 
 from . import __version__
+from .repository import install_dvc_profile, repository_root
+from .runtime import capture_runtime, resolve_runtime
 
 app = typer.Typer(no_args_is_help=True, pretty_exceptions_show_locals=False)
 credentials_app = typer.Typer(no_args_is_help=True, hidden=True)
@@ -31,6 +33,8 @@ artifact_app = typer.Typer(no_args_is_help=True)
 app.add_typer(artifact_app, name="artifact")
 project_app = typer.Typer(no_args_is_help=True)
 app.add_typer(project_app, name="project")
+repository_app = typer.Typer(no_args_is_help=True)
+app.add_typer(repository_app, name="repository")
 
 
 def _config_path() -> Path:
@@ -49,16 +53,56 @@ def _configured_server() -> str | None:
 
 
 def _repository_context(start: Path | None = None) -> dict[str, str]:
-    current = (start or Path.cwd()).resolve()
-    for directory in (current, *current.parents):
-        candidate = directory / ".homebrew-mlflow.json"
-        if candidate.is_file():
-            payload = json.loads(candidate.read_text(encoding="utf-8"))
-            required = ("server", "project_id", "repository_id")
-            if not all(isinstance(payload.get(key), str) for key in required):
-                raise RuntimeError("invalid .homebrew-mlflow.json repository context")
-            return {key: payload[key] for key in required}
-    raise RuntimeError("not inside a Homebrew MLflow research repository")
+    candidate = repository_root(start) / ".homebrew-mlflow.json"
+    payload = json.loads(candidate.read_text(encoding="utf-8"))
+    required = ("server", "project_id", "repository_id")
+    if not all(isinstance(payload.get(key), str) for key in required):
+        raise RuntimeError("invalid .homebrew-mlflow.json repository context")
+    return {key: payload[key] for key in required}
+
+
+def _git_output(*arguments: str, root: Path | None = None) -> str:
+    result = subprocess.run(
+        ["git", *arguments],
+        cwd=root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"Git command failed: git {' '.join(arguments)}")
+    return result.stdout.strip()
+
+
+def _committed_upstream_state(root: Path) -> str:
+    if _git_output("status", "--porcelain", root=root):
+        raise RuntimeError("repository has uncommitted changes")
+    commit = _git_output("rev-parse", "HEAD", root=root)
+    upstream = _git_output("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}", root=root)
+    if _git_output("rev-list", "--count", f"{upstream}..HEAD", root=root) != "0":
+        raise RuntimeError("current commit has not been pushed to its upstream branch")
+    return commit
+
+
+def _resolve_environment(
+    client: httpx.Client,
+    server: str,
+    headers: dict[str, str],
+    project_id: str,
+    name: str,
+    kind: str,
+    document: dict[str, object],
+) -> str:
+    response = client.put(
+        f"{server}/api/v1/projects/{project_id}/environment-specifications/resolve",
+        headers=headers,
+        json={"name": name, "kind": kind, "document": document},
+    )
+    response.raise_for_status()
+    identifier = response.json().get("id")
+    if not isinstance(identifier, str):
+        raise RuntimeError("platform returned an invalid environment specification")
+    return identifier
 
 
 def _refresh_session(client: httpx.Client, server: str) -> dict[str, object]:
@@ -321,6 +365,8 @@ def project_create(
             raise RuntimeError(
                 "project was created, but git clone failed; verify your GitLab SSH key"
             )
+        profile, path = install_dvc_profile(clone_to.resolve())
+        typer.echo(f"Configured DVC credential profile {profile} in {path}.")
 
 
 @project_app.command("list")
@@ -401,6 +447,13 @@ def project_retry(
             client, normalized, headers, project_id, repository_id, timeout
         )
     _print_repository(repository)
+
+
+@repository_app.command("configure")
+def repository_configure() -> None:
+    """Install this repository's generated DVC credential profile."""
+    profile, path = install_dvc_profile(repository_root())
+    typer.echo(f"Configured DVC credential profile {profile} in {path}.")
 
 
 @app.command()
@@ -544,10 +597,58 @@ def artifact_pointer(
     typer.echo(f"Wrote immutable pointer {output}")
 
 
+@artifact_app.command("create")
+def artifact_create(name: Annotated[str, typer.Argument(help="Artifact family name")]) -> None:
+    """Create an explicit, reusable artifact family in the current project."""
+    repository = _repository_context()
+    server = repository["server"].rstrip("/")
+    with httpx.Client(timeout=15) as client:
+        headers = _project_headers(_refresh_session(client, server))
+        response = client.post(
+            f"{server}/api/v1/projects/{repository['project_id']}/artifacts",
+            headers=headers,
+            json={"name": name},
+        )
+        response.raise_for_status()
+    artifact = response.json()
+    typer.echo(f"{artifact['id']}\t{artifact['name']}")
+
+
+@artifact_app.command("list")
+def artifact_list() -> None:
+    """List artifact families in the current project."""
+    repository = _repository_context()
+    server = repository["server"].rstrip("/")
+    with httpx.Client(timeout=15) as client:
+        headers = _project_headers(_refresh_session(client, server))
+        response = client.get(
+            f"{server}/api/v1/projects/{repository['project_id']}/artifacts", headers=headers
+        )
+        response.raise_for_status()
+    for artifact in response.json():
+        typer.echo(f"{artifact['id']}\t{artifact['name']}")
+
+
+def _resolve_artifact(
+    client: httpx.Client, server: str, headers: dict[str, str], project_id: str, reference: str
+) -> str:
+    response = client.get(f"{server}/api/v1/projects/{project_id}/artifacts", headers=headers)
+    response.raise_for_status()
+    matches = [
+        value
+        for value in response.json()
+        if value.get("id") == reference or value.get("name", "").casefold() == reference.casefold()
+    ]
+    if len(matches) != 1:
+        raise typer.BadParameter(
+            f"artifact {reference!r} was not found or is ambiguous; create it explicitly first"
+        )
+    return str(matches[0]["id"])
+
+
 @publication_app.command("submit")
 def submit_publication(
-    commit_sha: Annotated[str, typer.Option("--commit-sha")],
-    artifact_id: Annotated[str, typer.Option("--artifact-id")],
+    artifact: Annotated[str, typer.Option("--artifact", help="Artifact family ID or name")],
     output: Annotated[str, typer.Option("--out")],
     pipeline: Annotated[str | None, typer.Option("--pipeline")] = None,
     stage: Annotated[str | None, typer.Option("--stage")] = None,
@@ -556,6 +657,8 @@ def submit_publication(
 ) -> None:
     """Submit committed DVC metadata for server-side publication validation."""
     repository = _repository_context()
+    root = repository_root()
+    commit_sha = _committed_upstream_state(root)
     if dvc_file is not None:
         if pipeline is not None or stage is not None:
             raise typer.BadParameter("--dvc-file cannot be combined with pipeline options")
@@ -572,6 +675,10 @@ def submit_publication(
     server = repository["server"].rstrip("/")
     with httpx.Client(timeout=30) as client:
         session = _refresh_session(client, server)
+        platform_headers = _project_headers(session)
+        artifact_id = _resolve_artifact(
+            client, server, platform_headers, repository["project_id"], artifact
+        )
         exchange = client.post(
             f"{server}/api/v1/auth/exchange",
             headers={"Authorization": f"Bearer {session['access_token']}"},
@@ -623,31 +730,68 @@ def run(
     context: typer.Context,
     experiment: Annotated[str, typer.Option("--experiment")],
     input_version: Annotated[list[str] | None, typer.Option("--input-version")] = None,
-    pipeline_version: Annotated[str | None, typer.Option("--pipeline-version")] = None,
-    environment: Annotated[str | None, typer.Option("--environment")] = None,
-    infisical_project: Annotated[str | None, typer.Option("--infisical-project")] = None,
-    infisical_environment: Annotated[str, typer.Option("--infisical-environment")] = "dev",
-    infisical_path: Annotated[str, typer.Option("--infisical-path")] = "/",
+    environment_kind: Annotated[str | None, typer.Option("--environment-kind")] = None,
+    environment_name: Annotated[str | None, typer.Option("--environment-name")] = None,
+    secrets_enabled: Annotated[
+        bool | None, typer.Option("--secrets/--no-secrets")
+    ] = None,
 ) -> None:
-    """Run a researcher-supplied command locally and record its lifecycle."""
+    """Run a local command with automatically captured, immutable provenance."""
     command = list(context.args)
     if command[:1] == ["--"]:
         command = command[1:]
     if not command:
         raise typer.BadParameter("a command is required after --")
     repository = _repository_context()
+    root = repository_root()
     server = repository["server"].rstrip("/")
+    selection = resolve_runtime(
+        root,
+        command,
+        kind_override=environment_kind,
+        name_override=environment_name,
+        secrets_override=secrets_enabled,
+    )
+    captured_before = capture_runtime(root, command, selection)
+    if selection.secrets_enabled and shutil.which("infisical") is None:
+        raise RuntimeError("Infisical CLI is required for this Run")
+    commit_sha = _committed_upstream_state(root)
+    secret_context: dict[str, str] | None = None
     with httpx.Client(timeout=15) as client:
         session = _refresh_session(client, server)
+        headers = _project_headers(session)
+        environment_id = _resolve_environment(
+            client,
+            server,
+            headers,
+            repository["project_id"],
+            selection.name,
+            selection.kind,
+            captured_before.document,
+        )
+        if selection.secrets_enabled:
+            secret_response = client.get(
+                f"{server}/api/v1/projects/{repository['project_id']}/secret-context",
+                headers=headers,
+            )
+            secret_response.raise_for_status()
+            configured_secret = secret_response.json()
+            if configured_secret.get("reconciliation_state") != "in_sync":
+                raise RuntimeError("project secret context is not reconciled")
+            secret_context = {
+                "project_id": str(configured_secret["infisical_project_id"]),
+                "environment": str(configured_secret["environment_slug"]),
+                "path": str(configured_secret["secret_path"]),
+            }
         created = client.post(
             f"{server}/api/v1/projects/{repository['project_id']}/runs",
-            headers={"Authorization": f"Bearer {session['access_token']}"},
+            headers=headers,
             json={
                 "repository_id": repository["repository_id"],
                 "experiment_name": experiment,
                 "command": command,
-                "pipeline_version_id": pipeline_version,
-                "environment_specification_id": environment,
+                "pipeline_version_id": None,
+                "environment_specification_id": environment_id,
             },
         )
         created.raise_for_status()
@@ -657,6 +801,13 @@ def run(
     if not isinstance(logging_token, str):
         raise RuntimeError("platform did not return a Run-scoped logging token")
     typer.echo(f"Run {run_id} started.")
+
+    token_descriptor, token_name = tempfile.mkstemp(prefix="homebrew-mlflow-token-")
+    token_path = Path(token_name)
+    with os.fdopen(token_descriptor, "w", encoding="utf-8") as token_file:
+        token_file.write(logging_token)
+        token_file.flush()
+        os.fsync(token_file.fileno())
 
     stop = threading.Event()
     heartbeat_error: list[str] = []
@@ -671,6 +822,10 @@ def run(
                         headers={"Authorization": f"Bearer {heartbeat_session['access_token']}"},
                     )
                     response.raise_for_status()
+                    refreshed_logging_token = response.json().get("logging_token")
+                    if not isinstance(refreshed_logging_token, str):
+                        raise RuntimeError("platform omitted the refreshed Run logging token")
+                    token_path.write_text(refreshed_logging_token, encoding="utf-8")
             except Exception as error:
                 heartbeat_error.append(type(error).__name__)
                 return
@@ -685,33 +840,44 @@ def run(
             "HOMEBREW_MLFLOW_REPOSITORY_ID": repository["repository_id"],
             "HOMEBREW_MLFLOW_SERVER": server,
             "MLFLOW_TRACKING_URI": f"{server}/mlflow",
-            "MLFLOW_TRACKING_TOKEN": logging_token,
+            "MLFLOW_TRACKING_TOKEN_FILE": str(token_path),
             "MLFLOW_RUN_ID": run_id,
             "MLFLOW_EXPERIMENT_ID": str(run_record["experiment_id"]),
         }
     )
     interrupted = False
-    child_command = command
-    secret_context: dict[str, str] | None = None
-    if infisical_project is not None:
-        if shutil.which("infisical") is None:
-            raise RuntimeError("Infisical CLI is required for this Run")
-        secret_context = {
-            "project_id": infisical_project,
-            "environment": infisical_environment,
-            "path": infisical_path,
-        }
+    child_command = list(captured_before.command)
+    if selection.kind == "container":
+        run_index = child_command.index("run")
+        container_token_path = "/run/homebrew-mlflow/token"
+        child_environment["MLFLOW_TRACKING_TOKEN_FILE"] = container_token_path
+        inherited = [
+            "HOMEBREW_MLFLOW_RUN_ID",
+            "HOMEBREW_MLFLOW_PROJECT_ID",
+            "HOMEBREW_MLFLOW_REPOSITORY_ID",
+            "HOMEBREW_MLFLOW_SERVER",
+            "MLFLOW_TRACKING_URI",
+            "MLFLOW_TRACKING_TOKEN_FILE",
+            "MLFLOW_RUN_ID",
+            "MLFLOW_EXPERIMENT_ID",
+        ]
+        child_command[run_index + 1 : run_index + 1] = [
+            "--mount",
+            f"type=bind,source={token_path},target={container_token_path},readonly",
+            *(value for name in inherited for value in ("--env", name)),
+        ]
+    if secret_context is not None:
         child_command = [
             "infisical",
             "run",
             "--projectId",
-            infisical_project,
+            secret_context["project_id"],
             "--env",
-            infisical_environment,
+            secret_context["environment"],
             "--path",
-            infisical_path,
+            secret_context["path"],
             "--",
-            *command,
+            *child_command,
         ]
     try:
         completed = subprocess.run(child_command, check=False, env=child_environment)  # noqa: S603
@@ -722,30 +888,64 @@ def run(
     finally:
         stop.set()
         heartbeat_thread.join(timeout=5)
+        token_path.unlink(missing_ok=True)
 
-    commit = subprocess.run(
-        ["git", "rev-parse", "HEAD"],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    commit_sha = commit.stdout.strip() if commit.returncode == 0 else None
+    provenance_error: str | None = None
+    pipeline_version_id: str | None = None
+    try:
+        final_commit = _committed_upstream_state(root)
+        if final_commit != commit_sha:
+            raise RuntimeError("repository commit changed while the Run was executing")
+        captured_after = capture_runtime(root, command, selection)
+        if captured_after.fingerprint != captured_before.fingerprint:
+            raise RuntimeError("environment_drift")
+    except RuntimeError as error:
+        provenance_error = str(error)
+        captured_after = None
+        if exit_code == 0:
+            exit_code = 1
     status_value = "interrupted" if interrupted else ("succeeded" if exit_code == 0 else "failed")
     with httpx.Client(timeout=15) as client:
         final_session = _refresh_session(client, server)
+        final_headers = _project_headers(final_session)
+        if provenance_error is None and (root / "dvc.yaml").is_file():
+            pipeline_response = client.put(
+                f"{server}/api/v1/projects/{repository['project_id']}/pipeline-versions/resolve",
+                headers=final_headers,
+                json={
+                    "repository_id": repository["repository_id"],
+                    "git_commit_sha": commit_sha,
+                    "pipeline_path": "dvc.yaml",
+                },
+            )
+            pipeline_response.raise_for_status()
+            resolved_pipeline = pipeline_response.json().get("id")
+            if not isinstance(resolved_pipeline, str):
+                raise RuntimeError("platform returned an invalid pipeline version")
+            pipeline_version_id = resolved_pipeline
         finalized = client.post(
             f"{server}/api/v1/runs/{run_id}/finalize",
-            headers={"Authorization": f"Bearer {final_session['access_token']}"},
+            headers=final_headers,
             json={
                 "exit_code": exit_code,
                 "status": status_value,
                 "git_commit_sha": commit_sha,
+                "pipeline_version_id": pipeline_version_id,
+                "environment_specification_id": environment_id,
                 "evidence": {
                     "heartbeat_error": heartbeat_error[0] if heartbeat_error else None,
                     "client_version": __version__,
-                    "python_version": platform.python_version(),
                     "input_artifact_version_ids": input_version or [],
                     "secret_context": secret_context,
+                    "environment": {
+                        "kind": selection.kind,
+                        "name": selection.name,
+                        "fingerprint_before": captured_before.fingerprint,
+                        "fingerprint_after": (
+                            captured_after.fingerprint if captured_after is not None else None
+                        ),
+                    },
+                    "provenance_error": provenance_error,
                 },
             },
         )

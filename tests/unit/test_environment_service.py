@@ -2,7 +2,7 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 
 import pytest
-from homebrew_mlflow.application import AuthorizationDenied, EnvironmentService, ResourceConflict
+from homebrew_mlflow.application import AuthorizationDenied, EnvironmentService
 from homebrew_mlflow.domain import (
     AuditEvent,
     EnvironmentKind,
@@ -40,6 +40,21 @@ class EnvironmentStore:
 
     def specification(self, specification_id: PublicId) -> EnvironmentSpecification | None:
         return self.values.get(specification_id)
+
+    def specification_by_revision(
+        self, project_id: PublicId, name: str, kind: EnvironmentKind, sha256: str
+    ) -> EnvironmentSpecification | None:
+        return next(
+            (
+                value
+                for value in self.values.values()
+                if value.project_id == project_id
+                and value.name.lower() == name.lower()
+                and value.kind is kind
+                and value.sha256 == sha256
+            ),
+            None,
+        )
 
     def add(self, specification: EnvironmentSpecification) -> None:
         self.values[specification.id] = specification
@@ -81,11 +96,11 @@ def test_environment_document_is_canonical_hashed_and_audited() -> None:
     assert store.audits[0].safe_metadata == {"kind": "uv", "sha256": value.sha256}
 
 
-def test_environment_rejects_secrets_and_duplicate_names() -> None:
+def test_environment_rejects_secrets_and_reuses_exact_revision() -> None:
     store = _store()
     service = EnvironmentService(store)
     request = PublicId.generate(ResourceKind.REQUEST)
-    service.create(
+    original = service.create(
         store.actor,
         store.project,
         "training",
@@ -95,10 +110,27 @@ def test_environment_rejects_secrets_and_duplicate_names() -> None:
         NOW,
     )
 
-    with pytest.raises(ResourceConflict):
+    assert (
         service.create(
-            store.actor, store.project, "Training", EnvironmentKind.CONDA, {}, request, NOW
-        )
+            store.actor,
+            store.project,
+            "Training",
+            EnvironmentKind.CONDA,
+            {"python": "3.12"},
+            request,
+            NOW,
+        ).id
+        == original.id
+    )
+    assert service.create(
+        store.actor,
+        store.project,
+        "training",
+        EnvironmentKind.CONDA,
+        {"python": "3.13"},
+        request,
+        NOW,
+    ).id != original.id
     with pytest.raises(ValueError, match="sensitive"):
         service.create(
             store.actor,

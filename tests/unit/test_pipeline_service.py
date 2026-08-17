@@ -35,6 +35,18 @@ class PipelineStore:
     def definition(self, definition_id: PublicId) -> PipelineDefinition | None:
         return self.definitions_by_id.get(definition_id)
 
+    def definition_by_name(
+        self, _project_id: PublicId, name: str
+    ) -> PipelineDefinition | None:
+        return next(
+            (
+                value
+                for value in self.definitions_by_id.values()
+                if value.name.lower() == name.lower()
+            ),
+            None,
+        )
+
     def definition_name_exists(self, _project_id: PublicId, name: str) -> bool:
         return any(value.name.lower() == name.lower() for value in self.definitions_by_id.values())
 
@@ -45,6 +57,24 @@ class PipelineStore:
             (value.definition_id, value.repository_id, value.git_commit_sha, value.pipeline_path)
             == (definition_id, repository_id, commit, path)
             for value in self.version_values
+        )
+
+    def version_by_source(
+        self, definition_id: PublicId, repository_id: PublicId, commit: str, path: str
+    ) -> PipelineVersion | None:
+        return next(
+            (
+                value
+                for value in self.version_values
+                if (
+                    value.definition_id,
+                    value.repository_id,
+                    value.git_commit_sha,
+                    value.pipeline_path,
+                )
+                == (definition_id, repository_id, commit, path)
+            ),
+            None,
         )
 
     def definitions(

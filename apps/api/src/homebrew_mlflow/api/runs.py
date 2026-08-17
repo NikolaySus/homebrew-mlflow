@@ -45,6 +45,8 @@ class FinalizeRunRequest(BaseModel):
     status: Literal["succeeded", "failed", "interrupted"]
     git_commit_sha: str | None = Field(default=None, pattern="^[0-9a-f]{40,64}$")
     evidence: dict[str, Any] = Field(default_factory=dict)
+    pipeline_version_id: str | None = None
+    environment_specification_id: str | None = None
 
 
 class RunResponse(BaseModel):
@@ -295,14 +297,23 @@ def heartbeat(
         parsed_run = PublicId(ResourceKind.RUN, run_id)
     except ValueError as error:
         raise HTTPException(status_code=404, detail="run_not_found") from error
-    with create_session(get_settings().database_url) as session:
+    settings = get_settings()
+    with create_session(settings.database_url) as session:
         try:
             run = RunService(SqlAlchemyRunUnitOfWork(session)).heartbeat(
                 claims.principal_id, parsed_run, datetime.now(UTC)
             )
         except ValueError as error:
             raise HTTPException(status_code=404, detail="run_not_found") from error
-    return _response(run)
+    logging_token = access_tokens().issue(
+        claims.principal_id,
+        TokenAudience.MLFLOW,
+        project_id=run.project_id,
+        run_id=run.id,
+        scopes=frozenset({MachineScope.TRACK}),
+        lifetime=settings.run_logging_token_lifetime,
+    )
+    return _response(run, logging_token=logging_token)
 
 
 @router.post("/api/v1/runs/{run_id}/finalize", response_model=RunResponse)
@@ -313,6 +324,19 @@ def finalize(
 ) -> RunResponse:
     try:
         parsed_run = PublicId(ResourceKind.RUN, run_id)
+        pipeline_version = (
+            PublicId(ResourceKind.PIPELINE_VERSION, body.pipeline_version_id)
+            if body.pipeline_version_id
+            else None
+        )
+        environment = (
+            PublicId(
+                ResourceKind.ENVIRONMENT_SPECIFICATION,
+                body.environment_specification_id,
+            )
+            if body.environment_specification_id
+            else None
+        )
     except ValueError as error:
         raise HTTPException(status_code=404, detail="run_not_found") from error
     with create_session(get_settings().database_url) as session:
@@ -326,6 +350,8 @@ def finalize(
                     body.git_commit_sha,
                     body.evidence,
                     datetime.now(UTC),
+                    pipeline_version,
+                    environment,
                 ),
             )
         except ValueError as error:

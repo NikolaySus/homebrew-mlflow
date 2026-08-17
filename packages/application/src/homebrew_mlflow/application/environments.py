@@ -16,7 +16,7 @@ from homebrew_mlflow.domain import (
     permits,
 )
 
-from .projects import AuthorizationDenied, ResourceConflict
+from .projects import AuthorizationDenied
 from .redaction import redact_mapping
 
 
@@ -30,6 +30,10 @@ class EnvironmentUnitOfWork(Protocol):
     ) -> tuple[EnvironmentSpecification, ...]: ...
 
     def specification(self, specification_id: PublicId) -> EnvironmentSpecification | None: ...
+
+    def specification_by_revision(
+        self, project_id: PublicId, name: str, kind: EnvironmentKind, sha256: str
+    ) -> EnvironmentSpecification | None: ...
 
     def add(self, specification: EnvironmentSpecification) -> None: ...
 
@@ -62,20 +66,24 @@ class EnvironmentService:
     ) -> EnvironmentSpecification:
         self._require(actor_id, project_id, MachineScope.TRACK)
         normalized_name = name.strip()
-        if self._uow.name_exists(project_id, normalized_name):
-            raise ResourceConflict("Environment Specification name already exists")
         if redact_mapping(document) != document:
             raise ValueError("Environment Specification contains sensitive fields")
         canonical = json.dumps(
             document, ensure_ascii=False, separators=(",", ":"), sort_keys=True
         )
+        digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        existing = self._uow.specification_by_revision(
+            project_id, normalized_name, kind, digest
+        )
+        if existing is not None:
+            return existing
         specification = EnvironmentSpecification(
             PublicId.generate(ResourceKind.ENVIRONMENT_SPECIFICATION),
             project_id,
             normalized_name,
             kind,
             canonical,
-            hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
+            digest,
             now,
         )
         self._uow.add(specification)

@@ -31,10 +31,15 @@ def test_checked_in_template_renders_all_required_files() -> None:
         ".gitignore",
         "AGENTS.md",
         "README.md",
+        "dvc.yaml",
+        "homebrew-mlflow.toml",
+        "pyproject.toml",
+        "uv.lock",
         "examples/mlflow_autolog.py",
         "scripts/dvc-publish.ps1",
         "scripts/dvc-publish.sh",
         "scripts/run-experiment.py",
+        "train.py",
     } <= by_path.keys()
     assert "{{" not in "".join(file.content for file in rendered)
     assert str(template_context.project_id) in by_path["README.md"].content

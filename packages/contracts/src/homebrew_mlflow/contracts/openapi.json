@@ -244,6 +244,14 @@
         "responses": {"204": {"description": "Pipeline Definition archived"}, "403": {"description": "Maintainer required", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorEnvelope"}}}}}
       }
     },
+    "/api/v1/projects/{project_id}/pipeline-versions/resolve": {
+      "put": {
+        "operationId": "resolvePipelineVersion", "summary": "Idempotently resolve an immutable committed Pipeline Version", "security": [{"bearerAuth": []}],
+        "parameters": [{"name": "project_id", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/RegisterPipelineVersionRequest"}}}},
+        "responses": {"200": {"description": "Existing or newly registered Pipeline Version", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/PipelineVersionResponse"}}}}}
+      }
+    },
     "/api/v1/pipeline-definitions/{definition_id}/versions": {
       "get": {
         "operationId": "listPipelineVersions", "summary": "List immutable Pipeline Versions", "security": [{"bearerAuth": []}],
@@ -282,6 +290,14 @@
         "operationId": "archiveEnvironmentSpecification", "summary": "Archive an Environment Specification without deleting Run provenance", "security": [{"bearerAuth": []}],
         "parameters": [{"name": "specification_id", "in": "path", "required": true, "schema": {"type": "string"}}],
         "responses": {"204": {"description": "Environment Specification archived"}, "403": {"description": "Maintainer required", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorEnvelope"}}}}}
+      }
+    },
+    "/api/v1/projects/{project_id}/environment-specifications/resolve": {
+      "put": {
+        "operationId": "resolveEnvironmentSpecification", "summary": "Idempotently resolve a captured immutable Environment Specification", "security": [{"bearerAuth": []}],
+        "parameters": [{"name": "project_id", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CreateEnvironmentSpecificationRequest"}}}},
+        "responses": {"200": {"description": "Existing or newly created Environment Specification", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/EnvironmentSpecificationResponse"}}}}}
       }
     },
     "/api/v1/projects/{project_id}/memberships": {
@@ -854,7 +870,9 @@
           "exit_code": {"type": "integer"},
           "status": {"type": "string", "enum": ["succeeded", "failed", "interrupted"]},
           "git_commit_sha": {"type": ["string", "null"], "pattern": "^[0-9a-f]{40,64}$"},
-          "evidence": {"type": "object", "additionalProperties": true}
+          "evidence": {"type": "object", "additionalProperties": true},
+          "pipeline_version_id": {"type": ["string", "null"], "pattern": "^pv_[0-9A-HJKMNP-TV-Z]{26}$"},
+          "environment_specification_id": {"type": ["string", "null"], "pattern": "^env_[0-9A-HJKMNP-TV-Z]{26}$"}
         }
       },
       "RunResponse": {
@@ -869,7 +887,7 @@
           "heartbeat_at": {"type": ["string", "null"], "format": "date-time"},
           "ended_at": {"type": ["string", "null"], "format": "date-time"},
           "exit_code": {"type": ["integer", "null"]},
-          "logging_token": {"type": ["string", "null"], "description": "Returned only when a Run is created; bound to this Run and the tracking audience."}
+          "logging_token": {"type": ["string", "null"], "description": "Returned when a Run is created or heartbeated; bound to this Run and the tracking audience."}
         }
       },
       "ExperimentResponse": {

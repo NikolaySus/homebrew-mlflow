@@ -31,6 +31,10 @@ class RegisterPipelineVersionRequest(BaseModel):
     pipeline_path: str = Field(min_length=1, max_length=1000)
 
 
+class ResolvePipelineVersionRequest(RegisterPipelineVersionRequest):
+    pass
+
+
 class PipelineDefinitionResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -175,6 +179,39 @@ def register_pipeline_version(
             body.pipeline_path,
             PublicId(ResourceKind.REQUEST, request.state.request_id),
             now,
+        )
+    return _version(value)
+
+
+@router.put(
+    "/projects/{project_id}/pipeline-versions/resolve",
+    response_model=PipelineVersionResponse,
+)
+def resolve_pipeline_version(
+    project_id: str,
+    body: ResolvePipelineVersionRequest,
+    request: Request,
+    claims: Annotated[AccessTokenClaims, Depends(platform_claims)],
+) -> PipelineVersionResponse:
+    project = _id(ResourceKind.PROJECT, project_id, "project_not_found")
+    repository = _id(ResourceKind.REPOSITORY, body.repository_id, "repository_not_found")
+    settings = get_settings()
+    with create_session(settings.database_url) as session:
+        value = PipelineService(
+            SqlAlchemyPipelineUnitOfWork(session),
+            GitLabPipelineSourceReader(
+                session,
+                str(settings.gitlab_base_url),
+                settings.gitlab_integration_token.get_secret_value(),
+            ),
+        ).resolve_version(
+            claims.principal_id,
+            project,
+            repository,
+            body.git_commit_sha,
+            body.pipeline_path,
+            PublicId(ResourceKind.REQUEST, request.state.request_id),
+            datetime.now(UTC),
         )
     return _version(value)
 

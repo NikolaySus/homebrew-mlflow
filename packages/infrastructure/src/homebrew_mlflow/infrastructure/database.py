@@ -1646,6 +1646,20 @@ class SqlAlchemyPipelineUnitOfWork:
         ).one_or_none()
         return self._definition_value(*row) if row is not None else None
 
+    def definition_by_name(
+        self, project_id: PublicId, name: str
+    ) -> PipelineDefinition | None:
+        project_key = self._projects._project_key(project_id)
+        if project_key is None:
+            return None
+        row = self._session.scalar(
+            select(PipelineDefinitionRow).where(
+                PipelineDefinitionRow.project_id == project_key,
+                func.lower(PipelineDefinitionRow.name) == name.lower(),
+            )
+        )
+        return self._definition_value(row, str(project_id)) if row is not None else None
+
     def definition_name_exists(self, project_id: PublicId, name: str) -> bool:
         project_key = self._projects._project_key(project_id)
         return (
@@ -1685,6 +1699,28 @@ class SqlAlchemyPipelineUnitOfWork:
             ) or 0)
             > 0
         )
+
+    def version_by_source(
+        self, definition_id: PublicId, repository_id: PublicId, commit: str, path: str
+    ) -> PipelineVersion | None:
+        value = self._session.execute(
+            select(PipelineVersionRow, GitRepositoryRow.public_id)
+            .join(GitRepositoryRow, GitRepositoryRow.id == PipelineVersionRow.repository_id)
+            .join(
+                PipelineDefinitionRow,
+                PipelineDefinitionRow.id == PipelineVersionRow.definition_id,
+            )
+            .where(
+                PipelineDefinitionRow.public_id == str(definition_id),
+                GitRepositoryRow.public_id == str(repository_id),
+                PipelineVersionRow.git_commit_sha == commit,
+                PipelineVersionRow.pipeline_path == path,
+            )
+        ).one_or_none()
+        if value is None:
+            return None
+        row, repository_public_id = value
+        return self._version_value(row, repository_public_id, definition_id)
 
     def definitions(
         self, project_id: PublicId, *, include_archived: bool
@@ -1866,6 +1902,22 @@ class SqlAlchemyEnvironmentUnitOfWork:
             return None
         row, project_id = value
         return self._value(row, PublicId(ResourceKind.PROJECT, project_id))
+
+    def specification_by_revision(
+        self, project_id: PublicId, name: str, kind: EnvironmentKind, sha256: str
+    ) -> EnvironmentSpecification | None:
+        project_key = self._projects._project_key(project_id)
+        if project_key is None:
+            return None
+        row = self._session.scalar(
+            select(EnvironmentSpecificationRow).where(
+                EnvironmentSpecificationRow.project_id == project_key,
+                func.lower(EnvironmentSpecificationRow.name) == name.lower(),
+                EnvironmentSpecificationRow.kind == kind.value,
+                EnvironmentSpecificationRow.sha256 == sha256,
+            )
+        )
+        return self._value(row, project_id) if row is not None else None
 
     def add(self, specification: EnvironmentSpecification) -> None:
         project_key = self._projects._project_key(specification.project_id)
@@ -2158,6 +2210,16 @@ class SqlAlchemyRunUnitOfWork:
         row.finalization_digest = run.finalization_digest
         row.git_commit_sha = run.git_commit_sha
         row.finalization_evidence = run.finalization_evidence
+        row.pipeline_version_id = (
+            self._key(PipelineVersionRow, run.pipeline_version_id)
+            if run.pipeline_version_id is not None
+            else None
+        )
+        row.environment_specification_id = (
+            self._key(EnvironmentSpecificationRow, run.environment_specification_id)
+            if run.environment_specification_id is not None
+            else None
+        )
 
     def artifact_version_available_to_project(
         self, version_id: PublicId, project_id: PublicId, at: datetime
@@ -2183,13 +2245,53 @@ class SqlAlchemyRunUnitOfWork:
             is not None
         )
 
-    def add_run_input(self, run_id: PublicId, version_id: PublicId) -> None:
+    def add_run_input(
+        self, run_id: PublicId, version_id: PublicId, occurred_at: datetime
+    ) -> None:
         run_key = self._key(RunRow, run_id)
         version_key = self._key(ArtifactVersionRow, version_id)
         if run_key is None or version_key is None:
             raise ValueError("Run input refers to a missing resource")
         if self._session.get(RunArtifactInputRow, (run_key, version_key)) is None:
             self._session.add(RunArtifactInputRow(run_id=run_key, artifact_version_id=version_key))
+        run_row = self._session.get(RunRow, run_key)
+        version_row = self._session.get(ArtifactVersionRow, version_key)
+        if (
+            run_row is None
+            or version_row is None
+            or version_row.owning_project_id == run_row.project_id
+        ):
+            return
+        grant = self._session.scalar(
+            select(ArtifactSharingGrantRow).where(
+                ArtifactSharingGrantRow.artifact_version_id == version_key,
+                ArtifactSharingGrantRow.consuming_project_id == run_row.project_id,
+                ArtifactSharingGrantRow.effective_at <= occurred_at,
+                (ArtifactSharingGrantRow.revoked_at.is_(None))
+                | (ArtifactSharingGrantRow.revoked_at > occurred_at),
+            )
+        )
+        if grant is None:
+            raise ValueError("shared Run input does not have an active grant")
+        existing = self._session.scalar(
+            select(SharedArtifactReferenceRow.id).where(
+                SharedArtifactReferenceRow.artifact_version_id == version_key,
+                SharedArtifactReferenceRow.run_id == run_key,
+            )
+        )
+        if existing is None:
+            self._session.add(
+                SharedArtifactReferenceRow(
+                    id=uuid4(),
+                    public_id=str(PublicId.generate(ResourceKind.SHARED_REFERENCE)),
+                    artifact_version_id=version_key,
+                    grant_id=grant.id,
+                    consuming_project_id=run_row.project_id,
+                    created_by=run_row.creator_principal_id,
+                    run_id=run_key,
+                    created_at=occurred_at,
+                )
+            )
 
     def stale_running_runs(self, heartbeat_before: datetime) -> tuple[Run, ...]:
         public_ids = self._session.scalars(
@@ -3688,6 +3790,25 @@ class SqlAlchemyPublicationWorkStore(SqlAlchemyPublicationUnitOfWork):
                 created_at=now,
             )
         )
+        if producing_run_key is not None and row.created_by is not None:
+            source_versions = tuple(
+                self._session.scalars(
+                    select(RunArtifactInputRow.artifact_version_id).where(
+                        RunArtifactInputRow.run_id == producing_run_key
+                    )
+                )
+            )
+            if len(source_versions) == 1:
+                self._session.add(
+                    ArtifactDerivationRow(
+                        id=uuid4(),
+                        public_id=str(PublicId.generate(ResourceKind.DERIVATION)),
+                        source_version_id=source_versions[0],
+                        derived_version_id=version_key,
+                        created_by=row.created_by,
+                        created_at=now,
+                    )
+                )
         row.state = published.state.value
         row.updated_at = now
         row.artifact_version_id = version_key

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from homebrew_mlflow.cli.main import app
+from homebrew_mlflow.cli.runtime import RuntimeCapture, RuntimeSelection
 from typer.testing import CliRunner
 
 
@@ -44,6 +45,13 @@ class Client:
             )
         return Response({"state": "succeeded"})
 
+    def put(self, url: str, **_kwargs: Any) -> Response:
+        if url.endswith("/environment-specifications/resolve"):
+            return Response({"id": "env_01K00000000000000000000000"})
+        if url.endswith("/pipeline-versions/resolve"):
+            return Response({"id": "pv_01K00000000000000000000000"})
+        raise AssertionError(url)
+
 
 def test_run_executes_child_locally_and_finalizes(monkeypatch, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
     context = {
@@ -58,14 +66,25 @@ def test_run_executes_child_locally_and_finalizes(monkeypatch, tmp_path: Path) -
         "homebrew_mlflow.cli.main._refresh_session",
         lambda _client, _server: {"access_token": "access"},
     )
+    selection = RuntimeSelection("system", "default", False)
+    capture = RuntimeCapture(selection, {"kind": "system"}, "f" * 64, ("python", "train.py"))
+    monkeypatch.setattr(
+        "homebrew_mlflow.cli.main.resolve_runtime", lambda *_args, **_kwargs: selection
+    )
+    monkeypatch.setattr(
+        "homebrew_mlflow.cli.main.capture_runtime", lambda *_args, **_kwargs: capture
+    )
+    monkeypatch.setattr(
+        "homebrew_mlflow.cli.main._committed_upstream_state", lambda _root: "a" * 40
+    )
     executed: list[list[str]] = []
 
     def fake_run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
-        if command[:2] == ["git", "rev-parse"]:
-            return subprocess.CompletedProcess(command, 0, "a" * 40 + "\n", "")
         executed.append(command)
         assert "hmrf_" not in json.dumps(kwargs.get("env", {}))
-        assert kwargs["env"]["MLFLOW_TRACKING_TOKEN"] == "run-scoped-token"
+        token_file = Path(kwargs["env"]["MLFLOW_TRACKING_TOKEN_FILE"])
+        assert token_file.read_text(encoding="utf-8") == "run-scoped-token"
+        assert "MLFLOW_TRACKING_TOKEN" not in kwargs["env"]
         return subprocess.CompletedProcess(command, 0)
 
     monkeypatch.setattr("homebrew_mlflow.cli.main.subprocess.run", fake_run)
@@ -77,10 +96,6 @@ def test_run_executes_child_locally_and_finalizes(monkeypatch, tmp_path: Path) -
             "run",
             "--experiment",
             "baseline",
-            "--pipeline-version",
-            "pv_01K00000000000000000000000",
-            "--environment",
-            "env_01K00000000000000000000000",
             "--",
             "python",
             "train.py",
@@ -89,8 +104,8 @@ def test_run_executes_child_locally_and_finalizes(monkeypatch, tmp_path: Path) -
 
     assert result.exit_code == 0, result.output
     assert executed == [["python", "train.py"]]
-    assert Client.requests[0][0].endswith("/runs")
-    assert Client.requests[0][1]["json"]["pipeline_version_id"].startswith("pv_")
-    assert Client.requests[0][1]["json"]["environment_specification_id"].startswith("env_")
+    create = next(request for request in Client.requests if request[0].endswith("/runs"))
+    assert create[1]["json"]["pipeline_version_id"] is None
+    assert create[1]["json"]["environment_specification_id"].startswith("env_")
     assert Client.requests[-1][0].endswith("/finalize")
     assert Client.requests[-1][1]["json"]["git_commit_sha"] == "a" * 40

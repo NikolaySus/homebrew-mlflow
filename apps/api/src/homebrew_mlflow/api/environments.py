@@ -107,6 +107,19 @@ def create_environment_specification(
     return _response(value)
 
 
+@router.put(
+    "/projects/{project_id}/environment-specifications/resolve",
+    response_model=EnvironmentSpecificationResponse,
+)
+def resolve_environment_specification(
+    project_id: str,
+    body: CreateEnvironmentSpecificationRequest,
+    request: Request,
+    claims: Annotated[AccessTokenClaims, Depends(platform_claims)],
+) -> EnvironmentSpecificationResponse:
+    return create_environment_specification(project_id, body, request, claims)
+
+
 @router.delete(
     "/environment-specifications/{specification_id}",
     status_code=status.HTTP_204_NO_CONTENT,

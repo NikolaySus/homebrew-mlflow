@@ -66,7 +66,9 @@ class RunUnitOfWork(Protocol):
         self, version_id: PublicId, project_id: PublicId, at: datetime
     ) -> bool: ...
 
-    def add_run_input(self, run_id: PublicId, version_id: PublicId) -> None: ...
+    def add_run_input(
+        self, run_id: PublicId, version_id: PublicId, occurred_at: datetime
+    ) -> None: ...
 
     def commit(self) -> None: ...
 
@@ -91,6 +93,8 @@ class FinalizeRun:
     git_commit_sha: str | None
     evidence: dict[str, Any]
     occurred_at: datetime
+    pipeline_version_id: PublicId | None = None
+    environment_specification_id: PublicId | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,6 +164,20 @@ class RunService:
     def finalize(self, actor_id: PublicId, command: FinalizeRun) -> Run:
         run = self._required_run(command.run_id)
         self._authorize_run_actor(actor_id, run)
+        valid_pipeline = command.pipeline_version_id is None or (
+            self._uow.pipeline_version_belongs_to_project(
+                command.pipeline_version_id, run.project_id
+            )
+        )
+        if not valid_pipeline:
+            raise ValueError("Pipeline Version is not active in the selected project")
+        valid_environment = command.environment_specification_id is None or (
+            self._uow.environment_belongs_to_project(
+                command.environment_specification_id, run.project_id
+            )
+        )
+        if not valid_environment:
+            raise ValueError("Environment Specification is not active in the selected project")
         digest = hashlib.sha256(
             json.dumps(
                 {
@@ -167,6 +185,14 @@ class RunService:
                     "status": command.status.value,
                     "git_commit_sha": command.git_commit_sha,
                     "evidence": command.evidence,
+                    "pipeline_version_id": str(command.pipeline_version_id)
+                    if command.pipeline_version_id
+                    else None,
+                    "environment_specification_id": str(
+                        command.environment_specification_id
+                    )
+                    if command.environment_specification_id
+                    else None,
                 },
                 ensure_ascii=False,
                 separators=(",", ":"),
@@ -188,6 +214,8 @@ class RunService:
             finalization_digest=digest,
             git_commit_sha=command.git_commit_sha,
             evidence=command.evidence,
+            pipeline_version_id=command.pipeline_version_id,
+            environment_specification_id=command.environment_specification_id,
         )
         input_values = command.evidence.get("input_artifact_version_ids", [])
         if not isinstance(input_values, list) or not all(
@@ -203,7 +231,7 @@ class RunService:
                 version_id, run.project_id, command.occurred_at
             ):
                 raise AuthorizationDenied("input Artifact Version is not available to the Run")
-            self._uow.add_run_input(run.id, version_id)
+            self._uow.add_run_input(run.id, version_id, command.occurred_at)
         self._uow.save_run(updated)
         self._uow.commit()
         return updated

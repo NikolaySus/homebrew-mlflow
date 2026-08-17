@@ -101,11 +101,12 @@ Before publication:
 3. Commit all reproducibility-relevant code, parameters, and DVC metadata.
 4. Push the immutable Git commit to its upstream branch.
 5. Confirm the relevant worktree and DVC metadata are clean.
-6. Invoke the supplied publication script with a semantic DVC selector, Artifact ID, and optional Run ID:
+6. Invoke the supplied publication script with a semantic DVC selector, artifact family name or ID,
+   and optional Run ID:
 
 ```text
 scripts/dvc-publish.sh --pipeline dvc.yaml --stage <stage> --out <output> \
-  --artifact-id <artifact-id> [--run-id <run-id>]
+  --artifact <artifact-name-or-id> [--run-id <run-id>]
 ```
 
 On Windows, use the equivalent `scripts/dvc-publish.ps1` command. The publication script validates and

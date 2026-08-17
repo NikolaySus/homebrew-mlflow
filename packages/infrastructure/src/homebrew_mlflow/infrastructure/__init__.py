@@ -39,6 +39,7 @@ from .gitlab_oauth import (
 )
 from .gitlab_reconciliation import GitLabMembershipReconciler
 from .gitlab_repositories import GitLabRepositoryHost, GitLabRepositoryProvisioningError
+from .infisical_projects import InfisicalProjectProvisioner
 from .infisical_reconciliation import InfisicalMembershipReconciler
 from .pipeline_sources import GitLabPipelineSourceReader
 from .publication_validator import GitLabDvcPublicationValidator
@@ -85,6 +86,7 @@ __all__ = [
     "GitLabRepositoryHost",
     "GitLabRepositoryProvisioningError",
     "InfisicalMembershipReconciler",
+    "InfisicalProjectProvisioner",
     "GitLabPipelineSourceReader",
     "FileSystemRepositoryTemplate",
     "RepositoryTemplateError",

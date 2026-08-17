@@ -1,0 +1,6 @@
+[environment]
+kind = "uv"
+name = "default"
+
+[secrets]
+enabled = false

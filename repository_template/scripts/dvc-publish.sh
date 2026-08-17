@@ -13,11 +13,4 @@ if [[ -n "$dirty_metadata" ]]; then
   exit 3
 fi
 
-commit_sha="$(git rev-parse HEAD)"
-upstream_sha="$(git rev-parse '@{upstream}' 2>/dev/null || true)"
-if [[ -z "$upstream_sha" || "$upstream_sha" != "$commit_sha" ]]; then
-  echo "error: the current commit must be pushed to its configured upstream" >&2
-  exit 4
-fi
-
-exec homebrew-mlflow publication submit --commit-sha "$commit_sha" "$@"
+exec homebrew-mlflow publication submit "$@"

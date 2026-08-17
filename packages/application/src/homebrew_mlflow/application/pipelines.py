@@ -24,11 +24,19 @@ class PipelineUnitOfWork(Protocol):
 
     def definition(self, definition_id: PublicId) -> PipelineDefinition | None: ...
 
+    def definition_by_name(
+        self, project_id: PublicId, name: str
+    ) -> PipelineDefinition | None: ...
+
     def definition_name_exists(self, project_id: PublicId, name: str) -> bool: ...
 
     def version_exists(
         self, definition_id: PublicId, repository_id: PublicId, commit: str, path: str
     ) -> bool: ...
+
+    def version_by_source(
+        self, definition_id: PublicId, repository_id: PublicId, commit: str, path: str
+    ) -> PipelineVersion | None: ...
 
     def definitions(
         self, project_id: PublicId, *, include_archived: bool
@@ -127,6 +135,42 @@ class PipelineService:
         self._audit(actor_id, definition.project_id, version.id, "version", request_id, now)
         self._uow.commit()
         return version
+
+    def resolve_version(
+        self,
+        actor_id: PublicId,
+        project_id: PublicId,
+        repository_id: PublicId,
+        git_commit_sha: str,
+        pipeline_path: str,
+        request_id: PublicId,
+        now: datetime,
+    ) -> PipelineVersion:
+        self._require(actor_id, project_id, MachineScope.TRACK)
+        if self._uow.repository_project(repository_id) != project_id:
+            raise ValueError("Repository must belong to the selected project")
+        suffix = str(repository_id)[-8:]
+        available = 200 - len(suffix) - 3
+        name = f"{pipeline_path[:available]} [{suffix}]"
+        definition = self._uow.definition_by_name(project_id, name)
+        if definition is None:
+            definition = self.create_definition(
+                actor_id, project_id, name, request_id, now
+            )
+        existing = self._uow.version_by_source(
+            definition.id, repository_id, git_commit_sha, pipeline_path
+        )
+        if existing is not None:
+            return existing
+        return self.register_version(
+            actor_id,
+            definition.id,
+            repository_id,
+            git_commit_sha,
+            pipeline_path,
+            request_id,
+            now,
+        )
 
     def archive_definition(
         self,

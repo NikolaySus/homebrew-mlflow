@@ -1,0 +1,17 @@
+[project]
+name = "research-workspace"
+version = "0.1.0"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "dvc[s3]==3.67.1",
+  "homebrew-mlflow-plugins==0.1.0",
+  "mlflow==3.15.1",
+]
+
+[[tool.uv.index]]
+name = "homebrew-mlflow"
+url = "{{ platform_url }}/packages/simple/"
+explicit = true
+
+[tool.uv.sources]
+homebrew-mlflow-plugins = { index = "homebrew-mlflow" }

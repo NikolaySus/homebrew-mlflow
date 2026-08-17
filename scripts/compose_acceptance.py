@@ -140,6 +140,8 @@ def main() -> int:
         "/api/v1/projects/{project_id}/repositories/{repository_id}/retry-provisioning",
         "/api/v1/projects/{project_id}/runs",
         "/api/v1/projects/{project_id}/environment-specifications",
+        "/api/v1/projects/{project_id}/environment-specifications/resolve",
+        "/api/v1/projects/{project_id}/pipeline-versions/resolve",
         "/api/v1/projects/{project_id}/publication-operations",
         "/api/v1/projects/{project_id}/shared-artifact-references",
         "/api/v1/projects/{project_id}/memberships/{principal_id}/recover-maintainer",

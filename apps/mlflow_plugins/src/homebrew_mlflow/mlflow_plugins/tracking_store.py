@@ -4,6 +4,7 @@ import base64
 import json
 import os
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Any, cast
 
 import requests
@@ -30,7 +31,12 @@ class HomebrewTrackingStore(AbstractStore):
         if has_request_context():
             authorization = request.headers.get("Authorization")
         else:
-            token = os.environ.get("MLFLOW_TRACKING_TOKEN")
+            token_file = os.environ.get("MLFLOW_TRACKING_TOKEN_FILE")
+            token = (
+                Path(token_file).read_text(encoding="utf-8").strip()
+                if token_file
+                else os.environ.get("MLFLOW_TRACKING_TOKEN")
+            )
             authorization = f"Bearer {token}" if token else None
         if not authorization:
             raise MlflowException("authentication_required: missing Run-scoped logging token")
