@@ -183,7 +183,7 @@ def main() -> int:
         "SELECT version_num FROM alembic_version",
         capture=True,
     ).stdout.strip()
-    if migration != "0022_machine_credential_expiry":
+    if migration != "0023_automated_provenance":
         raise RuntimeError(f"unexpected migration head: {migration}")
     running = set(compose("ps", "--status", "running", "--services", capture=True).stdout.split())
     required_services = {"api", "publication-worker-1", "publication-worker-2"}
