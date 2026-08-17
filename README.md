@@ -34,7 +34,9 @@ Compose automatically provisions the local GitLab OAuth application, a 90-day Gi
 token, and the Infisical admin identity. One-shot `gitlab-bootstrap` and `infisical-bootstrap`
 services write their results to the `platform-secrets` named volume; API and worker containers mount
 that volume read-only and load the values through `*_FILE` settings. Generated values are never
-printed or placed in container environment variables. Repeated starts are idempotent.
+printed or placed in container environment variables. `infisical-token-renewer` immediately upgrades
+the bootstrap credential to the current expiring JWT format, renews it daily, and replaces the file
+atomically; workers reload the file for every Infisical request. Repeated starts are idempotent.
 
 The checked-in administrator password values are development-only. A production override must supply
 unique Infisical bootstrap credentials, HTTPS public URLs, platform signing/bootstrap keys, database

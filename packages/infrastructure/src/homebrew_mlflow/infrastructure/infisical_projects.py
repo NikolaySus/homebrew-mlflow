@@ -9,15 +9,18 @@ from sqlalchemy import exists, select
 from sqlalchemy.orm import Session
 
 from .database import AuditEventRow, ResearchProjectRow, SecretContextRow
+from .infisical_auth import InfisicalAccessToken, infisical_authorization_headers
 
 
 class InfisicalProjectProvisioner:
     """Create one deterministic Infisical secret-manager project per research project."""
 
-    def __init__(self, session: Session, *, base_url: str, access_token: str) -> None:
+    def __init__(
+        self, session: Session, *, base_url: str, access_token: InfisicalAccessToken
+    ) -> None:
         self._session = session
         self._base_url = base_url.rstrip("/")
-        self._headers = {"Authorization": f"Bearer {access_token}"}
+        self._access_token = access_token
 
     def run_once(self, now: datetime) -> bool:
         project = self._session.scalar(
@@ -82,7 +85,7 @@ class InfisicalProjectProvisioner:
     def _find(self, slug: str) -> dict[str, Any] | None:
         response = httpx.get(
             f"{self._base_url}/api/v1/projects",
-            headers=self._headers,
+            headers=infisical_authorization_headers(self._access_token),
             params={"type": "secret-manager"},
             timeout=20,
         )
@@ -100,7 +103,7 @@ class InfisicalProjectProvisioner:
     def _create(self, name: str, slug: str) -> dict[str, Any]:
         response = httpx.post(
             f"{self._base_url}/api/v1/projects",
-            headers=self._headers,
+            headers=infisical_authorization_headers(self._access_token),
             json={
                 "projectName": name[:64],
                 "projectDescription": "Managed by Homebrew MLflow",

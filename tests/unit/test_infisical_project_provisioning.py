@@ -54,12 +54,20 @@ def test_missing_project_gets_deterministic_infisical_context(monkeypatch) -> No
     )
     session = Session(project)
     created: list[dict[str, object]] = []
+    authorizations: list[str] = []
+    tokens = iter(("first-token", "second-token"))
+
+    def list_projects(url: str, **kwargs: object) -> httpx.Response:
+        authorizations.append(kwargs["headers"]["Authorization"])  # type: ignore[index]
+        return response("GET", url, {"projects": []})
+
     monkeypatch.setattr(
         "homebrew_mlflow.infrastructure.infisical_projects.httpx.get",
-        lambda url, **_kwargs: response("GET", url, {"projects": []}),
+        list_projects,
     )
 
     def create(url: str, **kwargs: object) -> httpx.Response:
+        authorizations.append(kwargs["headers"]["Authorization"])  # type: ignore[index]
         created.append(kwargs["json"])  # type: ignore[arg-type]
         return response(
             "POST",
@@ -78,7 +86,7 @@ def test_missing_project_gets_deterministic_infisical_context(monkeypatch) -> No
     )
 
     worked = InfisicalProjectProvisioner(  # type: ignore[arg-type]
-        session, base_url="https://secrets.example", access_token="secret"
+        session, base_url="https://secrets.example", access_token=lambda: next(tokens)
     ).run_once(NOW)
 
     context = next(value for value in session.added if isinstance(value, SecretContextRow))
@@ -90,4 +98,5 @@ def test_missing_project_gets_deterministic_infisical_context(monkeypatch) -> No
     assert created[0]["hasDeleteProtection"] is True
     assert created[0]["slug"] == "hm-protein-folding-00000000"
     assert audit.outcome == "success"
+    assert authorizations == ["Bearer first-token", "Bearer second-token"]
     assert session.commits == 1

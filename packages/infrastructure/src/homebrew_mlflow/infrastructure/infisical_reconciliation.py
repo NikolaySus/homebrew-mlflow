@@ -13,6 +13,7 @@ from .database import (
     ProjectMembershipRow,
     SecretContextRow,
 )
+from .infisical_auth import InfisicalAccessToken, infisical_authorization_headers
 
 
 class InfisicalMembershipReconciler:
@@ -25,12 +26,12 @@ class InfisicalMembershipReconciler:
         session: Session,
         *,
         base_url: str,
-        access_token: str,
+        access_token: InfisicalAccessToken,
         target_interval: timedelta = timedelta(minutes=5),
     ) -> None:
         self._session = session
         self._base_url = base_url.rstrip("/")
-        self._headers = {"Authorization": f"Bearer {access_token}"}
+        self._access_token = access_token
         self._target_interval = target_interval
 
     def run_once(self, now: datetime) -> bool:
@@ -77,7 +78,11 @@ class InfisicalMembershipReconciler:
             self._session.scalars(select(GitLabIdentityBindingRow.username))
         )
         endpoint = f"{self._base_url}/api/v1/projects/{context.infisical_project_id}/memberships"
-        response = httpx.get(endpoint, headers=self._headers, timeout=20)
+        response = httpx.get(
+            endpoint,
+            headers=infisical_authorization_headers(self._access_token),
+            timeout=20,
+        )
         response.raise_for_status()
         memberships = response.json().get("memberships", [])
         actual: dict[str, tuple[str, str | None]] = {}
@@ -98,7 +103,7 @@ class InfisicalMembershipReconciler:
             if missing:
                 invited = httpx.post(
                     endpoint,
-                    headers=self._headers,
+                    headers=infisical_authorization_headers(self._access_token),
                     json={"emails": [], "usernames": missing, "roleSlugs": [role]},
                     timeout=20,
                 )
@@ -109,7 +114,7 @@ class InfisicalMembershipReconciler:
             removed = httpx.request(
                 "DELETE",
                 endpoint,
-                headers=self._headers,
+                headers=infisical_authorization_headers(self._access_token),
                 json={"emails": [], "usernames": extra},
                 timeout=20,
             )
@@ -120,7 +125,7 @@ class InfisicalMembershipReconciler:
             if actual_role != expected[username]:
                 updated = httpx.patch(
                     f"{endpoint}/{membership_id}",
-                    headers=self._headers,
+                    headers=infisical_authorization_headers(self._access_token),
                     json={"roles": [{"role": expected[username], "isTemporary": False}]},
                     timeout=20,
                 )

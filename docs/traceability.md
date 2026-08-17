@@ -10,7 +10,7 @@ evidence and cannot be inferred from a unit test.
 | GitLab login, project membership, repository seed, doctor | bootstrapped OAuth/PAT, project provisioning, `repository_template`, CLI | `test_web_oauth_security.py`, `test_gitlab_oauth.py`, `test_repository_template.py`, `test_project_provisioning_coordinator.py`, `scripts/compose_acceptance.py` | boundary/HTTP/unit |
 | Local Run with central metrics | Run coordinator and tracking store/plugin | `test_run_service.py`, `test_tracking_service.py`, `test_mlflow_tracking_store.py` | unit/subprocess |
 | Long Run credential refresh | rotating refresh families and coordinator-owned child context | `test_refresh_tokens.py`, `test_access_tokens.py`, `test_cli_run.py` | unit/subprocess |
-| Infisical injection without secret capture | official bootstrap/CLI, file-backed reconciliation credential, redaction | `test_cli_run.py`, `test_redaction.py`, `scripts/compose_acceptance.py` | boundary/subprocess/unit |
+| Infisical injection without secret capture | official bootstrap/CLI, atomically renewed file-backed reconciliation credential, redaction | `test_cli_run.py`, `test_redaction.py`, `test_infisical_project_provisioning.py`, `scripts/compose_acceptance.py` | boundary/subprocess/unit |
 | Native DVC push does not publish | separate STS credential and publication APIs | `test_dvc_credentials.py`, `test_cli_dvc_credentials.py`, `test_publication_service.py` | unit/contract |
 | File/directory publication and atomic catalog creation | publication queue, isolated validator, work store | `test_publication_validator.py`, `test_publication_coordinator.py`, `test_publication_service.py` | boundary/unit |
 | SSE replay, reconnect, expiry, idempotency | durable publication events and cursor replay | `test_publication_service.py`, `test_api_contract.py` | unit/contract |
@@ -28,5 +28,5 @@ Compose acceptance profile must exercise GitLab, Infisical, PostgreSQL, MinIO, A
 workers, and the latest quarterly restore drill must have a recorded successful result.
 Run its public-boundary smoke gate with `uv run python scripts/compose_acceptance.py` after
 `docker compose -f deploy/compose/compose.yaml up -d --build`.
-The gate also checks migration head `0022`, both workers, generated OAuth coordinates, authenticated
+The gate also checks migration head `0023`, both workers, generated OAuth coordinates, authenticated
 GitLab integration access, the Infisical credential file, and Prometheus rule syntax.

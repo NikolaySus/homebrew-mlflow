@@ -53,10 +53,11 @@ def run() -> None:
     s3_access_key = os.environ["HOMEBREW_MLFLOW_S3_ACCESS_KEY_ID"]
     s3_secret_key = os.environ["HOMEBREW_MLFLOW_S3_SECRET_ACCESS_KEY"]
     infisical_url = os.environ["HOMEBREW_MLFLOW_INFISICAL_BASE_URL"]
-    infisical_token = _secret(
-        "HOMEBREW_MLFLOW_INFISICAL_RECONCILIATION_TOKEN",
-        "HOMEBREW_MLFLOW_INFISICAL_RECONCILIATION_TOKEN_FILE",
-    )
+    def infisical_token() -> str:
+        return _secret(
+            "HOMEBREW_MLFLOW_INFISICAL_RECONCILIATION_TOKEN",
+            "HOMEBREW_MLFLOW_INFISICAL_RECONCILIATION_TOKEN_FILE",
+        )
     template = FileSystemRepositoryTemplate(
         Path(os.getenv("HOMEBREW_MLFLOW_REPOSITORY_TEMPLATE", "/app/repository_template"))
     )

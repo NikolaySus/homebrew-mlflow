@@ -257,6 +257,9 @@ services:
       REDIS_URL: redis://infisical-redis:6379
       SITE_URL: http://secrets.localhost:8080
       TELEMETRY_ENABLED: "false"
+      # v0.162.14 still emits a legacy bootstrap JWT without exp. Give that one-shot
+      # credential a migration window so bootstrap can immediately upgrade it.
+      LEGACY_IDENTITY_ACCESS_TOKEN_EXPIRATION_ENFORCED_AT: "2026-08-18T00:00:00.000Z"
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/api/status"]
       interval: 10s
@@ -287,7 +290,7 @@ services:
         --organization="$$INFISICAL_ADMIN_ORGANIZATION"
         > /tmp/bootstrap.json;
         node -e 'const fs=require("fs"); const value=JSON.parse(fs.readFileSync("/tmp/bootstrap.json","utf8")); fs.writeFileSync("/run/platform-secrets/infisical-token",value.identity.credentials.token,{mode:0o600});'
-        chmod 0444 /run/platform-secrets/infisical-token
+        node /bootstrap/infisical-token-renewer.mjs --once
     environment:
       INFISICAL_ADMIN_EMAIL: admin@homebrew-mlflow.local
       INFISICAL_ADMIN_PASSWORD: development-infisical-admin-password
@@ -295,10 +298,31 @@ services:
     user: "0:0"
     restart: on-failure
     volumes:
+      - ../bootstrap:/bootstrap:ro
       - platform-secrets:/run/platform-secrets
     depends_on:
       infisical:
         condition: service_healthy
+
+  infisical-token-renewer:
+    image: infisical/infisical:v0.162.14@sha256:5afd9456b952b3dcd10ae10a819a617aef53a13bd88d70cf6fafe3c41a88b05c
+    entrypoint: ["node", "/bootstrap/infisical-token-renewer.mjs"]
+    environment:
+      INFISICAL_BASE_URL: http://infisical:8080
+      INFISICAL_TOKEN_FILE: /run/platform-secrets/infisical-token
+      INFISICAL_TOKEN_RENEW_INTERVAL_SECONDS: "86400"
+      INFISICAL_TOKEN_RENEW_RETRY_SECONDS: "60"
+    user: "0:0"
+    read_only: true
+    restart: unless-stopped
+    volumes:
+      - ../bootstrap:/bootstrap:ro
+      - platform-secrets:/run/platform-secrets
+    depends_on:
+      infisical:
+        condition: service_healthy
+      infisical-bootstrap:
+        condition: service_completed_successfully
 
   infisical-db:
     image: postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
