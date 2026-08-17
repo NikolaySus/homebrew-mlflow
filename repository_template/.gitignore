@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local environment and credentials
+.env
+.env.*
+!.env.example
+.dvc/config.local
+.aws/credentials
+
+# DVC local state and cache
+/.dvc/cache/
+/.dvc/tmp/
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

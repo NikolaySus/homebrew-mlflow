@@ -1,0 +1,353 @@
+services:
+  gateway:
+    image: caddy:2.8-alpine@sha256:af32e97399febea808609119bb21544d0265c58a02836576e32a2d082c262c17
+    ports:
+      - "8080:8080"
+    volumes:
+      - ../reverse-proxy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ../../build/packages:/srv/packages:ro
+      - ../../apps/web/dist:/srv/web:ro
+    depends_on:
+      api:
+        condition: service_healthy
+      mlflow:
+        condition: service_healthy
+      gitlab:
+        condition: service_healthy
+      infisical:
+        condition: service_healthy
+
+  api:
+    build:
+      context: ../..
+      dockerfile: deploy/images/api.Dockerfile
+    environment:
+      HOMEBREW_MLFLOW_PUBLIC_BASE_URL: http://localhost:8080
+      HOMEBREW_MLFLOW_GITLAB_PUBLIC_BASE_URL: http://git.localhost:8080
+      HOMEBREW_MLFLOW_DATABASE_URL: postgresql+psycopg://homebrew_mlflow:homebrew_mlflow@postgres:5432/homebrew_mlflow
+      HOMEBREW_MLFLOW_CLIENT_RELEASE_MANIFEST: /srv/packages/release-manifest.json
+      HOMEBREW_MLFLOW_S3_ENDPOINT_URL: http://object-storage:9000
+      HOMEBREW_MLFLOW_S3_PUBLIC_ENDPOINT_URL: http://localhost:9000
+      HOMEBREW_MLFLOW_S3_ACCESS_KEY_ID: development
+      HOMEBREW_MLFLOW_S3_SECRET_ACCESS_KEY: development-only-password
+      HOMEBREW_MLFLOW_ATTACHMENT_BUCKET: homebrew-mlflow
+      HOMEBREW_MLFLOW_DVC_BUCKET: research
+      HOMEBREW_MLFLOW_GITLAB_OAUTH_CLIENT_ID_FILE: /run/platform-secrets/gitlab-oauth-client-id
+      HOMEBREW_MLFLOW_GITLAB_OAUTH_CLIENT_SECRET_FILE: /run/platform-secrets/gitlab-oauth-client-secret
+      HOMEBREW_MLFLOW_GITLAB_INTEGRATION_TOKEN_FILE: /run/platform-secrets/gitlab-integration-token
+      HOMEBREW_MLFLOW_INFISICAL_RECONCILIATION_TOKEN_FILE: /run/platform-secrets/infisical-token
+    volumes:
+      - ../../build/packages:/srv/packages:ro
+      - platform-secrets:/run/platform-secrets:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready')"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      gitlab-bootstrap:
+        condition: service_completed_successfully
+      infisical-bootstrap:
+        condition: service_completed_successfully
+
+  mlflow:
+    build:
+      context: ../..
+      dockerfile: deploy/images/mlflow.Dockerfile
+    environment:
+      HOMEBREW_MLFLOW_PLATFORM_INTERNAL_URL: http://api:8000
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    depends_on:
+      api:
+        condition: service_healthy
+
+  publication-worker-1: &publication-worker
+    build:
+      context: ../..
+      dockerfile: deploy/images/worker.Dockerfile
+    environment: &publication-worker-environment
+      HOMEBREW_MLFLOW_DATABASE_URL: postgresql+psycopg://homebrew_mlflow:homebrew_mlflow@postgres:5432/homebrew_mlflow
+      HOMEBREW_MLFLOW_PUBLIC_BASE_URL: http://gateway:8080
+      HOMEBREW_MLFLOW_GITLAB_BASE_URL: http://gitlab
+      HOMEBREW_MLFLOW_GITLAB_INTEGRATION_TOKEN_FILE: /run/platform-secrets/gitlab-integration-token
+      HOMEBREW_MLFLOW_DVC_REMOTE_BASE_URL: s3://research/dvc
+      HOMEBREW_MLFLOW_S3_ENDPOINT_URL: http://object-storage:9000
+      HOMEBREW_MLFLOW_S3_ACCESS_KEY_ID: development
+      HOMEBREW_MLFLOW_S3_SECRET_ACCESS_KEY: development-only-password
+      HOMEBREW_MLFLOW_DVC_BUCKET: research
+      HOMEBREW_MLFLOW_ATTACHMENT_BUCKET: homebrew-mlflow
+      HOMEBREW_MLFLOW_PUBLICATION_MAX_SECONDS: "1800"
+      HOMEBREW_MLFLOW_PUBLICATION_MAX_BYTES: "107374182400"
+      HOMEBREW_MLFLOW_PUBLICATION_MAX_OBJECTS: "1000000"
+      HOMEBREW_MLFLOW_SSE_RETENTION_DAYS: "7"
+      HOMEBREW_MLFLOW_PROVISIONAL_RETENTION_DAYS: "30"
+      HOMEBREW_MLFLOW_ATTACHMENT_RETENTION_DAYS: "180"
+      HOMEBREW_MLFLOW_ENABLE_OBJECT_RETENTION: "true"
+      HOMEBREW_MLFLOW_INFISICAL_BASE_URL: http://infisical:8080
+      HOMEBREW_MLFLOW_INFISICAL_RECONCILIATION_TOKEN_FILE: /run/platform-secrets/infisical-token
+    read_only: true
+    volumes:
+      - platform-secrets:/run/platform-secrets:ro
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cpus: 2
+    mem_limit: 4g
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      object-storage:
+        condition: service_healthy
+      object-storage-bootstrap:
+        condition: service_completed_successfully
+      gitlab:
+        condition: service_healthy
+      infisical:
+        condition: service_healthy
+      gitlab-bootstrap:
+        condition: service_completed_successfully
+      infisical-bootstrap:
+        condition: service_completed_successfully
+
+  publication-worker-2:
+    <<: *publication-worker
+    environment:
+      <<: *publication-worker-environment
+      HOMEBREW_MLFLOW_ENABLE_OBJECT_RETENTION: "false"
+
+  migrate:
+    build:
+      context: ../..
+      dockerfile: deploy/images/api.Dockerfile
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      HOMEBREW_MLFLOW_DATABASE_URL: postgresql+psycopg://homebrew_mlflow:homebrew_mlflow@postgres:5432/homebrew_mlflow
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
+    environment:
+      POSTGRES_DB: homebrew_mlflow
+      POSTGRES_USER: homebrew_mlflow
+      POSTGRES_PASSWORD: homebrew_mlflow
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U homebrew_mlflow"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  object-storage:
+    image: minio/minio:latest@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+    command: server /data --console-address :9001
+    ports:
+      - "9000:9000"
+    environment:
+      MINIO_ROOT_USER: development
+      MINIO_ROOT_PASSWORD: development-only-password
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - object-data:/data
+
+  object-storage-bootstrap:
+    image: minio/mc:latest@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        set -eu;
+        mc alias set platform http://object-storage:9000
+        "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD";
+        mc mb --ignore-existing
+        platform/research platform/homebrew-mlflow
+    environment:
+      MINIO_ROOT_USER: development
+      MINIO_ROOT_PASSWORD: development-only-password
+    restart: on-failure
+    depends_on:
+      object-storage:
+        condition: service_healthy
+
+  gitlab:
+    image: gitlab/gitlab-ce:19.2.1-ce.0@sha256:2777b4a990a05a40947437d3c8e0e03347974d8998663d266064cebaff00ba87
+    hostname: git.localhost
+    shm_size: 256m
+    environment:
+      GITLAB_OMNIBUS_CONFIG: |
+        external_url 'http://git.localhost:8080'
+        gitlab_rails['nginx']['listen_port'] = 80
+        gitlab_rails['nginx']['listen_https'] = false
+        gitlab_rails['gitlab_shell_ssh_port'] = 2222
+        prometheus_monitoring['enable'] = false
+    ports:
+      - "2222:22"
+    healthcheck:
+      test: ["CMD", "/opt/gitlab/bin/gitlab-healthcheck", "--fail", "--max-time", "10"]
+      interval: 20s
+      timeout: 15s
+      retries: 30
+      start_period: 5m
+    volumes:
+      - gitlab-config:/etc/gitlab
+      - gitlab-logs:/var/log/gitlab
+      - gitlab-data:/var/opt/gitlab
+      - platform-secrets:/run/platform-secrets
+      - ../bootstrap:/bootstrap:ro
+    post_start:
+      - command: >-
+          /bin/bash -lc 'chmod 0711 /run/platform-secrets;
+          if test -s /run/platform-secrets/gitlab-oauth-client-id
+          && test -s /run/platform-secrets/gitlab-oauth-client-secret
+          && test -s /run/platform-secrets/gitlab-integration-token;
+          then exit 0; fi;
+          for attempt in {1..60}; do
+          gitlab-rails runner /bootstrap/gitlab.rb && exit 0;
+          sleep 5; done; exit 1'
+        user: root
+
+  gitlab-bootstrap:
+    image: gitlab/gitlab-ce:19.2.1-ce.0@sha256:2777b4a990a05a40947437d3c8e0e03347974d8998663d266064cebaff00ba87
+    entrypoint: ["/bin/bash", "-lc"]
+    command:
+      - >-
+        if test -s /run/platform-secrets/gitlab-oauth-client-id
+        && test -s /run/platform-secrets/gitlab-oauth-client-secret
+        && test -s /run/platform-secrets/gitlab-integration-token;
+        then exit 0; fi;
+        for attempt in {1..60}; do
+        if test -s /run/platform-secrets/gitlab-oauth-client-id
+        && test -s /run/platform-secrets/gitlab-oauth-client-secret
+        && test -s /run/platform-secrets/gitlab-integration-token;
+        then exit 0; fi; sleep 5; done; exit 1
+    restart: on-failure
+    volumes:
+      - platform-secrets:/run/platform-secrets:ro
+    depends_on:
+      gitlab:
+        condition: service_healthy
+
+  infisical:
+    image: infisical/infisical:v0.162.14@sha256:5afd9456b952b3dcd10ae10a819a617aef53a13bd88d70cf6fafe3c41a88b05c
+    environment:
+      ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef
+      AUTH_SECRET: development-infisical-auth-secret-change-in-production
+      DB_CONNECTION_URI: postgres://infisical:infisical@infisical-db:5432/infisical
+      REDIS_URL: redis://infisical-redis:6379
+      SITE_URL: http://secrets.localhost:8080
+      TELEMETRY_ENABLED: "false"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/api/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 90s
+    depends_on:
+      infisical-db:
+        condition: service_healthy
+      infisical-redis:
+        condition: service_healthy
+
+  infisical-bootstrap:
+    image: infisical/infisical:v0.162.14@sha256:5afd9456b952b3dcd10ae10a819a617aef53a13bd88d70cf6fafe3c41a88b05c
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        set -eu;
+        chmod 0711 /run/platform-secrets;
+        if test -s /run/platform-secrets/infisical-token; then
+        chmod 0444 /run/platform-secrets/infisical-token; exit 0; fi;
+        umask 077;
+        trap 'rm -f /tmp/bootstrap.json' EXIT;
+        /usr/bin/infisical bootstrap
+        --domain=http://infisical:8080
+        --email="$$INFISICAL_ADMIN_EMAIL"
+        --password="$$INFISICAL_ADMIN_PASSWORD"
+        --organization="$$INFISICAL_ADMIN_ORGANIZATION"
+        > /tmp/bootstrap.json;
+        node -e 'const fs=require("fs"); const value=JSON.parse(fs.readFileSync("/tmp/bootstrap.json","utf8")); fs.writeFileSync("/run/platform-secrets/infisical-token",value.identity.credentials.token,{mode:0o600});'
+        chmod 0444 /run/platform-secrets/infisical-token
+    environment:
+      INFISICAL_ADMIN_EMAIL: admin@homebrew-mlflow.local
+      INFISICAL_ADMIN_PASSWORD: development-infisical-admin-password
+      INFISICAL_ADMIN_ORGANIZATION: Homebrew MLflow
+    user: "0:0"
+    restart: on-failure
+    volumes:
+      - platform-secrets:/run/platform-secrets
+    depends_on:
+      infisical:
+        condition: service_healthy
+
+  infisical-db:
+    image: postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
+    environment:
+      POSTGRES_DB: infisical
+      POSTGRES_USER: infisical
+      POSTGRES_PASSWORD: infisical
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U infisical"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - infisical-postgres-data:/var/lib/postgresql/data
+
+  infisical-redis:
+    image: redis:7-alpine@sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - infisical-redis-data:/data
+
+  prometheus:
+    image: prom/prometheus:v3.5.0@sha256:63805ebb8d2b3920190daf1cb14a60871b16fd38bed42b857a3182bc621f4996
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=30d"]
+    volumes:
+      - ../monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../monitoring/rules.yml:/etc/prometheus/rules.yml:ro
+      - prometheus-data:/prometheus
+    depends_on:
+      api:
+        condition: service_healthy
+
+  grafana:
+    image: grafana/grafana:12.1.0@sha256:6ac590e7cabc2fbe8d7b8fc1ce9c9f0582177b334e0df9c927ebd9670469440f
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: development-grafana-password
+      GF_SERVER_ROOT_URL: http://ops.localhost:8080
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ../monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+
+volumes:
+  postgres-data:
+  object-data:
+  gitlab-config:
+  gitlab-logs:
+  gitlab-data:
+  infisical-postgres-data:
+  infisical-redis-data:
+  prometheus-data:
+  grafana-data:
+  platform-secrets:

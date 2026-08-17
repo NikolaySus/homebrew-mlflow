@@ -9,6 +9,9 @@ __pycache__/
 # Distribution / packaging
 .Python
 build/
+apps/web/dist/
+apps/web/node_modules/
+*.tsbuildinfo
 develop-eggs/
 dist/
 downloads/
@@ -216,3 +219,5 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+domains.csv
+deploy/compose/.env.production

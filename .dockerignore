@@ -1,0 +1,11 @@
+.git
+.github
+.mypy_cache
+.pytest_cache
+.ruff_cache
+.venv
+apps/web/node_modules
+build
+htmlcov
+__pycache__
+*.pyc

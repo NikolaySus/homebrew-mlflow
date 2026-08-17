@@ -1,0 +1,18 @@
+[Unit]
+Description=Homebrew MLflow research platform
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/homebrew-mlflow
+ExecStart=/usr/bin/docker compose --env-file /opt/homebrew-mlflow-secrets/production.env -f deploy/compose/compose.yaml -f deploy/compose/compose.production.yaml up -d --remove-orphans
+ExecReload=/usr/bin/docker compose --env-file /opt/homebrew-mlflow-secrets/production.env -f deploy/compose/compose.yaml -f deploy/compose/compose.production.yaml up -d --remove-orphans
+ExecStop=/usr/bin/docker compose --env-file /opt/homebrew-mlflow-secrets/production.env -f deploy/compose/compose.yaml -f deploy/compose/compose.production.yaml stop
+TimeoutStartSec=0
+TimeoutStopSec=300
+
+[Install]
+WantedBy=multi-user.target

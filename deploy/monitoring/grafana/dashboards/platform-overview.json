@@ -1,0 +1,34 @@
+{
+  "annotations": {"list": []},
+  "editable": false,
+  "panels": [
+    {
+      "id": 1,
+      "title": "API request rate",
+      "type": "timeseries",
+      "targets": [{"expr": "sum by (status) (rate(homebrew_mlflow_http_requests_total[5m]))", "legendFormat": "{{status}}"}],
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}
+    },
+    {
+      "id": 2,
+      "title": "API availability",
+      "type": "stat",
+      "targets": [{"expr": "up{job=\"homebrew-mlflow-api\"}"}],
+      "gridPos": {"h": 8, "w": 6, "x": 12, "y": 0}
+    },
+    {
+      "id": 3,
+      "title": "Active alerts",
+      "type": "stat",
+      "targets": [{"expr": "sum(ALERTS{alertstate=\"firing\"}) or vector(0)"}],
+      "gridPos": {"h": 8, "w": 6, "x": 18, "y": 0}
+    }
+  ],
+  "schemaVersion": 41,
+  "tags": ["homebrew-mlflow"],
+  "templating": {"list": []},
+  "time": {"from": "now-6h", "to": "now"},
+  "title": "Platform overview",
+  "uid": "homebrew-mlflow-overview",
+  "version": 1
+}

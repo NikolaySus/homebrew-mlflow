@@ -1,0 +1,1 @@
+"""Publication worker process boundary."""

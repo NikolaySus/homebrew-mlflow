@@ -1,0 +1,49 @@
+{
+  email Niiiiiikolay@yandex.ru
+}
+
+git.ml.spkya.ru {
+  reverse_proxy gitlab:80
+}
+
+secrets.ml.spkya.ru {
+  reverse_proxy infisical:8080
+}
+
+ops.ml.spkya.ru {
+  reverse_proxy grafana:3000
+}
+
+objects.ml.spkya.ru {
+  reverse_proxy object-storage:9000
+}
+
+ml.spkya.ru {
+  encode zstd gzip
+
+  handle /api/* {
+    reverse_proxy api:8000
+  }
+  handle /health/* {
+    reverse_proxy api:8000
+  }
+  handle /openapi.json {
+    reverse_proxy api:8000
+  }
+  handle_path /mlflow/* {
+    reverse_proxy mlflow:5000
+  }
+  handle_path /packages/* {
+    root * /srv/packages
+    @immutable path /files/*
+    header @immutable Cache-Control "public, max-age=31536000, immutable"
+    @index path /simple/* /release-manifest.json
+    header @index Cache-Control "no-cache"
+    file_server
+  }
+  handle {
+    root * /srv/web
+    try_files {path} /index.html
+    file_server
+  }
+}

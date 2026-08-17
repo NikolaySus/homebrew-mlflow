@@ -1,0 +1,81 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --all-packages --frozen
+      - run: uv run ruff check .
+      - run: uv run mypy -p homebrew_mlflow.domain -p homebrew_mlflow.application -p homebrew_mlflow.contracts -p homebrew_mlflow.infrastructure -p homebrew_mlflow.api -p homebrew_mlflow.worker -p homebrew_mlflow.cli
+      - run: uv run pytest --cov --cov-report=term-missing
+      - run: uv build --package homebrew-mlflow
+
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - run: npm ci
+      - run: npm run build
+
+  migrations:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
+        env:
+          POSTGRES_DB: homebrew_mlflow
+          POSTGRES_USER: homebrew_mlflow
+          POSTGRES_PASSWORD: homebrew_mlflow
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U homebrew_mlflow"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      HOMEBREW_MLFLOW_DATABASE_URL: postgresql+psycopg://homebrew_mlflow:homebrew_mlflow@localhost:5432/homebrew_mlflow
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --all-packages --frozen
+      - run: uv run alembic upgrade head
+      - run: uv run alembic downgrade base
+      - run: uv run alembic upgrade head
+      - run: uv run alembic current
+
+  wheelhouse:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python: ["3.11", "3.12", "3.13"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: astral-sh/setup-uv@v5
+      - run: uv build --package homebrew-mlflow --out-dir build/wheels
+      - run: uv build --package homebrew-mlflow-contracts --out-dir build/wheels
+      - run: uv export --package homebrew-mlflow --no-dev --no-emit-workspace --output-file build/cli-requirements.txt
+      - run: "python -m pip download --require-hashes --only-binary=:all: --requirement build/cli-requirements.txt --destination-directory build/wheels"
+      - run: python scripts/build_package_index.py build/wheels build/packages
+      - run: python -m pip install --no-index --find-links build/wheels homebrew-mlflow==0.1.0
+      - run: homebrew-mlflow version

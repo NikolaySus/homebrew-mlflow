@@ -1,0 +1,143 @@
+services:
+  gateway:
+    ports: !override
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ../reverse-proxy/Caddyfile.production:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    mem_limit: 192m
+    restart: unless-stopped
+
+  api:
+    environment:
+      HOMEBREW_MLFLOW_ENVIRONMENT: production
+      HOMEBREW_MLFLOW_PUBLIC_BASE_URL: https://ml.spkya.ru
+      HOMEBREW_MLFLOW_GITLAB_PUBLIC_BASE_URL: https://git.ml.spkya.ru
+      HOMEBREW_MLFLOW_DATABASE_URL: postgresql+psycopg://homebrew_mlflow:${PLATFORM_DB_PASSWORD:?set PLATFORM_DB_PASSWORD}@postgres:5432/homebrew_mlflow
+      HOMEBREW_MLFLOW_S3_PUBLIC_ENDPOINT_URL: https://objects.ml.spkya.ru
+      HOMEBREW_MLFLOW_S3_ACCESS_KEY_ID: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER}
+      HOMEBREW_MLFLOW_S3_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD}
+      HOMEBREW_MLFLOW_ACCESS_TOKEN_SIGNING_KEY: ${PLATFORM_SIGNING_KEY:?set PLATFORM_SIGNING_KEY}
+      HOMEBREW_MLFLOW_ACCESS_TOKEN_KEY_ID: ${PLATFORM_SIGNING_KEY_ID:?set PLATFORM_SIGNING_KEY_ID}
+      HOMEBREW_MLFLOW_BOOTSTRAP_TOKEN: ${PLATFORM_BOOTSTRAP_TOKEN:?set PLATFORM_BOOTSTRAP_TOKEN}
+    mem_limit: 768m
+    restart: unless-stopped
+
+  mlflow:
+    mem_limit: 768m
+    restart: unless-stopped
+
+  publication-worker-1:
+    environment:
+      HOMEBREW_MLFLOW_DATABASE_URL: postgresql+psycopg://homebrew_mlflow:${PLATFORM_DB_PASSWORD:?set PLATFORM_DB_PASSWORD}@postgres:5432/homebrew_mlflow
+      HOMEBREW_MLFLOW_PUBLIC_BASE_URL: https://ml.spkya.ru
+      HOMEBREW_MLFLOW_S3_ACCESS_KEY_ID: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER}
+      HOMEBREW_MLFLOW_S3_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD}
+    mem_limit: 1536m
+    restart: unless-stopped
+
+  publication-worker-2:
+    environment:
+      HOMEBREW_MLFLOW_DATABASE_URL: postgresql+psycopg://homebrew_mlflow:${PLATFORM_DB_PASSWORD:?set PLATFORM_DB_PASSWORD}@postgres:5432/homebrew_mlflow
+      HOMEBREW_MLFLOW_PUBLIC_BASE_URL: https://ml.spkya.ru
+      HOMEBREW_MLFLOW_S3_ACCESS_KEY_ID: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER}
+      HOMEBREW_MLFLOW_S3_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD}
+    mem_limit: 1536m
+    restart: unless-stopped
+
+  migrate:
+    environment:
+      HOMEBREW_MLFLOW_DATABASE_URL: postgresql+psycopg://homebrew_mlflow:${PLATFORM_DB_PASSWORD:?set PLATFORM_DB_PASSWORD}@postgres:5432/homebrew_mlflow
+
+  postgres:
+    environment:
+      POSTGRES_PASSWORD: ${PLATFORM_DB_PASSWORD:?set PLATFORM_DB_PASSWORD}
+    mem_limit: 1g
+    restart: unless-stopped
+
+  object-storage:
+    ports: !reset []
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD}
+      MINIO_SERVER_URL: https://objects.ml.spkya.ru
+    mem_limit: 1g
+    restart: unless-stopped
+
+  object-storage-bootstrap:
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD}
+
+  gitlab:
+    hostname: git.ml.spkya.ru
+    environment:
+      HOMEBREW_MLFLOW_GITLAB_OAUTH_REDIRECT_URI: https://ml.spkya.ru/api/v1/auth/web/callback
+      GITLAB_OMNIBUS_CONFIG: |
+        external_url 'https://git.ml.spkya.ru'
+        gitlab_rails['nginx']['listen_port'] = 80
+        gitlab_rails['nginx']['listen_https'] = false
+        letsencrypt['enable'] = false
+        gitlab_rails['gitlab_shell_ssh_port'] = 2222
+        puma['worker_processes'] = 2
+        puma['per_worker_max_memory_mb'] = 1200
+        sidekiq['concurrency'] = 10
+        alertmanager['enable'] = false
+        gitlab_exporter['enable'] = false
+        gitlab_kas['enable'] = false
+        node_exporter['enable'] = false
+        postgres_exporter['enable'] = false
+        prometheus_monitoring['enable'] = false
+        prometheus['enable'] = false
+        puma['exporter_enabled'] = false
+        redis_exporter['enable'] = false
+        sidekiq['metrics_enabled'] = false
+    mem_limit: 6g
+    restart: unless-stopped
+
+  infisical:
+    environment:
+      ENCRYPTION_KEY: ${INFISICAL_ENCRYPTION_KEY:?set INFISICAL_ENCRYPTION_KEY}
+      AUTH_SECRET: ${INFISICAL_AUTH_SECRET:?set INFISICAL_AUTH_SECRET}
+      DB_CONNECTION_URI: postgres://infisical:${INFISICAL_DB_PASSWORD:?set INFISICAL_DB_PASSWORD}@infisical-db:5432/infisical
+      SITE_URL: https://secrets.ml.spkya.ru
+    mem_limit: 1536m
+    restart: unless-stopped
+
+  infisical-bootstrap:
+    environment:
+      INFISICAL_ADMIN_EMAIL: Niiiiiikolay@yandex.ru
+      INFISICAL_ADMIN_PASSWORD: ${INFISICAL_ADMIN_PASSWORD:?set INFISICAL_ADMIN_PASSWORD}
+      INFISICAL_ADMIN_ORGANIZATION: Homebrew MLflow
+
+  infisical-db:
+    environment:
+      POSTGRES_PASSWORD: ${INFISICAL_DB_PASSWORD:?set INFISICAL_DB_PASSWORD}
+    mem_limit: 768m
+    restart: unless-stopped
+
+  infisical-redis:
+    mem_limit: 384m
+    restart: unless-stopped
+
+  prometheus:
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=30d
+      - --storage.tsdb.retention.size=2GB
+    mem_limit: 768m
+    restart: unless-stopped
+
+  grafana:
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD}
+      GF_SERVER_ROOT_URL: https://ops.ml.spkya.ru
+    mem_limit: 512m
+    restart: unless-stopped
+
+volumes:
+  caddy-data:
+  caddy-config:
