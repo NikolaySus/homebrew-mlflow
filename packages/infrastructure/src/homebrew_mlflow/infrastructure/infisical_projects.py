@@ -33,6 +33,7 @@ class InfisicalProjectProvisioner:
         if project is None:
             return False
         slug = self._slug(project.slug, project.public_id)
+        succeeded = False
         try:
             infisical_project = self._find(slug) or self._create(project.name, slug)
             identifier = infisical_project.get("id") or infisical_project.get("_id")
@@ -63,16 +64,20 @@ class InfisicalProjectProvisioner:
                 )
             )
             self._audit(project, identifier, now, "success", {})
+            succeeded = True
         except Exception as error:
+            metadata = {"error_code": type(error).__name__}
+            if isinstance(error, httpx.HTTPStatusError):
+                metadata["http_status"] = str(error.response.status_code)
             self._audit(
                 project,
                 project.public_id,
                 now,
                 "failed",
-                {"error_code": type(error).__name__},
+                metadata,
             )
         self._session.commit()
-        return True
+        return succeeded
 
     def _find(self, slug: str) -> dict[str, Any] | None:
         response = httpx.get(
