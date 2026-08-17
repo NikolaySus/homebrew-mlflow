@@ -186,7 +186,12 @@ def main() -> int:
     if migration != "0024_gitlab_identity_email":
         raise RuntimeError(f"unexpected migration head: {migration}")
     running = set(compose("ps", "--status", "running", "--services", capture=True).stdout.split())
-    required_services = {"api", "publication-worker-1", "publication-worker-2"}
+    required_services = {
+        "api",
+        "infisical-token-renewer",
+        "publication-worker-1",
+        "publication-worker-2",
+    }
     if missing_services := required_services - running:
         raise RuntimeError(f"required services are not running: {sorted(missing_services)}")
     compose(

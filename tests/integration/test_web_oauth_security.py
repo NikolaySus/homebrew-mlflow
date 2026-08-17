@@ -44,7 +44,14 @@ def test_web_oauth_uses_pkce_one_time_context_and_csrf(monkeypatch) -> None:  # 
         assert url.endswith("/api/v4/user")
         assert headers == {"Authorization": "Bearer short-lived-gitlab-token"}
         assert timeout == 20
-        return OAuthResponse({"id": 17, "username": "researcher", "name": "Researcher"})
+        return OAuthResponse(
+            {
+                "id": 17,
+                "username": "researcher",
+                "email": "researcher@example.com",
+                "name": "Researcher",
+            }
+        )
 
     monkeypatch.setattr("homebrew_mlflow.api.auth.create_session", lambda _url: Session(engine))
     monkeypatch.setattr("homebrew_mlflow.api.auth.httpx.post", post)
