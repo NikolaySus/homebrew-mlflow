@@ -33,6 +33,7 @@ class RepositoryProvisioningJob:
     repository_slug: str
     default_branch: str
     namespace_id: str | None
+    repository_provider_id: str | None = None
 
 
 class ProvisioningStore(Protocol):
@@ -84,12 +85,14 @@ class ProjectProvisioningCoordinator:
             return False
         namespace: HostedNamespace | None = None
         repository_provider_id: str | None = None
+        stage = "gitlab_namespace_failed"
         try:
             namespace = (
                 HostedNamespace(job.namespace_id, job.project_slug)
                 if job.namespace_id is not None
                 else self._namespace_host.create_private(job.project_name, job.project_slug)
             )
+            stage = "template_render_failed"
             files = self._template.render(
                 RepositoryTemplateContext(
                     repository_id=job.repository_id,
@@ -102,12 +105,14 @@ class ProjectProvisioningCoordinator:
                     s3_endpoint_url=self._s3_endpoint_url,
                 )
             )
+            stage = "gitlab_repository_failed"
             hosted = self._repository_host.create_with_seed(
                 HostedRepositoryRequest(
                     namespace_id=int(namespace.provider_id),
                     name=job.repository_name,
                     slug=job.repository_slug,
                     default_branch=job.default_branch,
+                    provider_id=job.repository_provider_id,
                 ),
                 files,
             )
@@ -122,10 +127,13 @@ class ProjectProvisioningCoordinator:
                 hosted.ssh_clone_url,
             )
         except Exception as error:
+            error_provider_id = getattr(error, "provider_id", None)
             self._store.fail(
                 job,
-                type(error).__name__,
+                str(getattr(error, "failure_code", stage)),
                 namespace.provider_id if namespace else job.namespace_id,
-                repository_provider_id,
+                str(error_provider_id or repository_provider_id)
+                if error_provider_id or repository_provider_id
+                else None,
             )
         return True

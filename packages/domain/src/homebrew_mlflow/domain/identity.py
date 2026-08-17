@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -77,8 +78,8 @@ class ResearchProject:
             raise ValueError("a project must belong to an organization")
         if not normalized_name or not normalized_slug:
             raise ValueError("project name and slug are required")
-        if not normalized_slug.replace("-", "").isalnum():
-            raise ValueError("project slug may contain only letters, digits, and hyphens")
+        if re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", normalized_slug) is None:
+            raise ValueError("project slug must be lowercase ASCII letters, digits, and hyphens")
         return cls(
             PublicId.generate(ResourceKind.PROJECT),
             organization_id,

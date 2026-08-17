@@ -38,6 +38,9 @@ class MemoryRepositoryUnitOfWork:
     def save_repository(self, repository: GitRepository) -> None:
         self.values = [repository if item.id == repository.id else item for item in self.values]
 
+    def retry_provisioning(self, repository: GitRepository) -> None:
+        self.save_repository(repository)
+
     def append_audit(self, event: AuditEvent) -> None:
         self.audits.append(event)
 
@@ -110,3 +113,26 @@ def test_maintainer_archives_repository_record_with_audit() -> None:
 
     assert archived.state.value == "archived"
     assert uow.audits[-1].action == "repository.archive"
+
+
+def test_maintainer_retries_failed_repository_with_audit() -> None:
+    project_id = PublicId.generate(ResourceKind.PROJECT)
+    actor_id = PublicId.generate(ResourceKind.PRINCIPAL)
+    uow = MemoryRepositoryUnitOfWork({(project_id, actor_id): ProjectRole.MAINTAINER})
+    repository = GitRepository.provisioning(
+        project_id, "Models", "models", "main", datetime.now(UTC)
+    ).fail("template_commit_failed", provider_id="42")
+    uow.values.append(repository)
+
+    retried = RepositoryService(uow).retry_provisioning(
+        actor_id,
+        project_id,
+        repository.id,
+        PublicId.generate(ResourceKind.REQUEST),
+        datetime.now(UTC),
+    )
+
+    assert retried.state.value == "provisioning"
+    assert retried.provider_id == "42"
+    assert retried.failure_code is None
+    assert uow.audits[-1].action == "repository.provisioning_retry"

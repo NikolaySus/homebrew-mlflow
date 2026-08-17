@@ -34,6 +34,21 @@ class InstallationClaimResponse(BaseModel):
     role: str
 
 
+class InstallationStatusResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    claimed: bool
+
+
+@router.get("/status", response_model=InstallationStatusResponse)
+def installation_status(
+    _claims: Annotated[AccessTokenClaims, Depends(platform_claims)],
+) -> InstallationStatusResponse:
+    with create_session(get_settings().database_url) as session:
+        claimed = SqlAlchemySetupStore(session).is_claimed()
+    return InstallationStatusResponse(claimed=claimed)
+
+
 @router.post("/claim", response_model=InstallationClaimResponse)
 def claim_installation(
     request: InstallationClaimRequest,

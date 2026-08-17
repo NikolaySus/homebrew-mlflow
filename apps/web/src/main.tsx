@@ -10,12 +10,21 @@ type Project = {
   state: string;
   archived_at: string | null;
 };
+type SetupStatus = { claimed: boolean };
+type Me = {
+  principal_id: string;
+  display_name: string;
+  organizations: { resource_id: string; role: string }[];
+};
+type Organization = { id: string; name: string };
 type Repository = {
   id: string;
   name: string;
   state: string;
   web_url: string | null;
+  http_clone_url: string | null;
   ssh_clone_url: string | null;
+  failure_code: string | null;
 };
 type Experiment = {
   id: string;
@@ -171,10 +180,27 @@ function csrfToken() {
   return value ? decodeURIComponent(value.slice("hm_csrf=".length)) : "";
 }
 
-function App() {
+export function suggestSlug(name: string) {
+  return name
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
+export function App() {
   const [token, setToken] = useState("");
   const [sessionChecked, setSessionChecked] = useState(false);
   const [projects, setProjects] = useState<Project[]>([]);
+  const [setupClaimed, setSetupClaimed] = useState<boolean | null>(null);
+  const [me, setMe] = useState<Me | null>(null);
+  const [organization, setOrganization] = useState<Organization | null>(null);
+  const [showProjectForm, setShowProjectForm] = useState(false);
+  const [projectBusy, setProjectBusy] = useState(false);
+  const [newProjectName, setNewProjectName] = useState("");
+  const [newProjectSlug, setNewProjectSlug] = useState("");
+  const [slugEdited, setSlugEdited] = useState(false);
   const [projectId, setProjectId] = useState("");
   const [tab, setTab] = useState<Tab>("overview");
   const [repositories, setRepositories] = useState<Repository[]>([]);
@@ -276,7 +302,19 @@ function App() {
   }, []);
   useEffect(() => {
     if (!token) return;
-    request<Project[]>("/api/v1/projects").then(setProjects).catch(showError);
+    Promise.all([
+      request<SetupStatus>("/api/v1/setup/status"),
+      request<Me>("/api/v1/me"),
+      request<Project[]>("/api/v1/projects"),
+      request<Organization>("/api/v1/organization").catch(() => null),
+    ])
+      .then(([setup, identity, projectValues, organizationValue]) => {
+        setSetupClaimed(setup.claimed);
+        setMe(identity);
+        setProjects(projectValues);
+        setOrganization(organizationValue);
+      })
+      .catch(showError);
   }, [token]);
   useEffect(() => {
     if (!projectId) return;
@@ -356,10 +394,114 @@ function App() {
     setError(String(value));
   }
   const selected = projects.find((project) => project.id === projectId);
+  const organizationRole = me?.organizations.find(
+    (binding) => binding.resource_id === organization?.id,
+  )?.role;
+  const canCreateProject = organizationRole === "admin";
   const experimentNames = useMemo(
     () => new Map(experiments.map((item) => [item.id, item.name])),
     [experiments],
   );
+
+  useEffect(() => {
+    if (!selected || selected.state !== "provisioning") return;
+    const started = Date.now();
+    const timer = window.setInterval(() => {
+      Promise.all([
+        request<Project[]>("/api/v1/projects"),
+        request<Repository[]>(`/api/v1/projects/${selected.id}/repositories`),
+      ])
+        .then(([projectValues, repositoryValues]) => {
+          setProjects(projectValues);
+          setRepositories(repositoryValues);
+          if (Date.now() - started > 300_000) {
+            setError("Provisioning is taking longer than expected; status polling continues.");
+          }
+        })
+        .catch(showError);
+    }, 2000);
+    return () => window.clearInterval(timer);
+  }, [selected?.id, selected?.state, token]);
+
+  async function claimInstallation(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    try {
+      setProjectBusy(true);
+      await request("/api/v1/setup/claim", {
+        method: "POST",
+        body: JSON.stringify({
+          organization_name: String(data.get("organization")).trim(),
+          bootstrap_token: String(data.get("bootstrap_token")),
+        }),
+      });
+      form.reset();
+      const [identity, organizationValue] = await Promise.all([
+        request<Me>("/api/v1/me"),
+        request<Organization>("/api/v1/organization"),
+      ]);
+      setMe(identity);
+      setOrganization(organizationValue);
+      setSetupClaimed(true);
+      setError("");
+    } catch (value) {
+      showError(value);
+    } finally {
+      setProjectBusy(false);
+    }
+  }
+
+  async function createProject(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!organization) return;
+    const data = new FormData(event.currentTarget);
+    try {
+      setProjectBusy(true);
+      const created = await request<{
+        id: string;
+        organization_id: string;
+        name: string;
+        slug: string;
+        default_repository: Repository;
+      }>("/api/v1/projects", {
+        method: "POST",
+        body: JSON.stringify({
+          organization_id: organization.id,
+          name: String(data.get("name")).trim(),
+          slug: String(data.get("slug")).trim(),
+        }),
+      });
+      setProjects(await request<Project[]>("/api/v1/projects"));
+      setProjectId(created.id);
+      setRepositories([created.default_repository]);
+      setShowProjectForm(false);
+      setError("");
+    } catch (value) {
+      showError(value);
+    } finally {
+      setProjectBusy(false);
+    }
+  }
+
+  async function retryProvisioning(repositoryId: string) {
+    if (!selected) return;
+    try {
+      await request(
+        `/api/v1/projects/${selected.id}/repositories/${repositoryId}/retry-provisioning`,
+        { method: "POST" },
+      );
+      const [projectValues, repositoryValues] = await Promise.all([
+        request<Project[]>("/api/v1/projects"),
+        request<Repository[]>(`/api/v1/projects/${selected.id}/repositories`),
+      ]);
+      setProjects(projectValues);
+      setRepositories(repositoryValues);
+      setError("");
+    } catch (value) {
+      showError(value);
+    }
+  }
 
   async function chooseRun(run: Run) {
     try {
@@ -800,6 +942,94 @@ function App() {
         </form>
       </main>
     );
+  if (setupClaimed === null)
+    return (
+      <main className="login">
+        <p className="eyebrow">Loading platform state…</p>
+      </main>
+    );
+  if (!setupClaimed)
+    return (
+      <main className="login">
+        <p className="eyebrow">FIRST-RUN SETUP</p>
+        <h1>Claim this installation</h1>
+        <p className="lede">
+          Create the first organization and make your GitLab identity its
+          administrator. The bootstrap token is submitted once and is never
+          stored in the browser.
+        </p>
+        {error && <div className="error">{error}</div>}
+        <form className="claimForm" onSubmit={claimInstallation}>
+          <input
+            name="organization"
+            placeholder="Organization name"
+            required
+            maxLength={200}
+          />
+          <input
+            name="bootstrap_token"
+            type="password"
+            autoComplete="off"
+            placeholder="Bootstrap token"
+            required
+          />
+          <button disabled={projectBusy}>Claim installation</button>
+        </form>
+      </main>
+    );
+  if (!organization)
+    return (
+      <main className="login">
+        <p className="eyebrow">ACCESS PENDING</p>
+        <h1>Organization membership required</h1>
+        <p className="lede">
+          The installation is already claimed. Ask an organization
+          administrator to enroll this GitLab account.
+        </p>
+      </main>
+    );
+
+  const projectForm = (
+    <section className="createPanel">
+      <p className="eyebrow">{organization.name}</p>
+      <h2>Create a research project</h2>
+      <p className="muted">
+        The platform will create a private GitLab repository and commit the
+        managed research template automatically.
+      </p>
+      <form className="stackForm" onSubmit={createProject}>
+        <input
+          name="name"
+          placeholder="Project name"
+          value={newProjectName}
+          onChange={(event) => {
+            setNewProjectName(event.target.value);
+            if (!slugEdited) setNewProjectSlug(suggestSlug(event.target.value));
+          }}
+          required
+          maxLength={200}
+        />
+        <input
+          name="slug"
+          placeholder="project-slug"
+          value={newProjectSlug}
+          onChange={(event) => {
+            setSlugEdited(true);
+            setNewProjectSlug(event.target.value.toLowerCase());
+          }}
+          pattern="[a-z0-9]+(?:-[a-z0-9]+)*"
+          required
+          maxLength={100}
+        />
+        <button disabled={projectBusy}>Create and provision</button>
+      </form>
+      {projects.length > 0 && (
+        <button className="linkButton" onClick={() => setShowProjectForm(false)}>
+          cancel
+        </button>
+      )}
+    </section>
+  );
 
   return (
     <div className="shell">
@@ -820,6 +1050,11 @@ function App() {
             <small>{project.state}</small>
           </button>
         ))}
+        {canCreateProject && (
+          <button className="newProject" onClick={() => setShowProjectForm(true)}>
+            + New project
+          </button>
+        )}
         <a className="docs" href="/docs">
           API reference
         </a>
@@ -838,9 +1073,11 @@ function App() {
         </button>
       </aside>
       <main className="workspace">
+        {(showProjectForm || (!selected && projects.length === 0 && canCreateProject)) &&
+          projectForm}
         {!selected ? (
           <div className="empty">
-            <h2>Choose a research project</h2>
+            <h2>{projects.length ? "Choose a research project" : "No research projects yet"}</h2>
             <p>
               Runs and immutable outputs stay grouped by their canonical
               project.
@@ -895,7 +1132,21 @@ function App() {
                           <a href={repo.web_url}>Open in GitLab</a>
                         )}
                         <small>{repo.ssh_clone_url}</small>
-                        {repo.state !== "archived" && (
+                        {repo.failure_code && <small>{repo.failure_code}</small>}
+                        {repo.state === "failed" &&
+                          memberships.some(
+                            (membership) =>
+                              membership.principal_id === me?.principal_id &&
+                              membership.role === "maintainer",
+                          ) && (
+                            <button
+                              className="linkButton"
+                              onClick={() => retryProvisioning(repo.id)}
+                            >
+                              retry provisioning
+                            </button>
+                          )}
+                        {(repo.state === "active" || repo.state === "failed") && (
                           <button
                             className="linkButton"
                             onClick={() => archiveRepository(repo.id)}
@@ -1668,8 +1919,10 @@ function formatBytes(value: number) {
   return `${size.toFixed(1)} ${units[index]}`;
 }
 
-ReactDOM.createRoot(document.getElementById("root")!).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>,
-);
+const root = document.getElementById("root");
+if (root)
+  ReactDOM.createRoot(root).render(
+    <React.StrictMode>
+      <App />
+    </React.StrictMode>,
+  );

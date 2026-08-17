@@ -96,3 +96,42 @@ def test_seed_failure_reports_created_gitlab_project() -> None:
             HostedRepositoryRequest(9, "Research", "research", "main"),
             (RepositorySeedFile("README.md", "# Research\n"),),
         )
+
+
+def test_retry_recognizes_matching_seeded_repository() -> None:
+    requests: list[httpx.Request] = []
+    sentinel = '{"project_id":"project_1"}\n'
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path == "/api/v4/projects/42":
+            return httpx.Response(
+                200,
+                request=request,
+                json={
+                    "id": 42,
+                    "default_branch": "main",
+                    "web_url": "https://git/repo",
+                    "http_url_to_repo": "https://git/repo.git",
+                    "ssh_url_to_repo": "git@git:repo.git",
+                },
+            )
+        if request.url.path.endswith("/.homebrew-mlflow.json/raw"):
+            return httpx.Response(200, request=request, text=sentinel)
+        raise AssertionError(request.url)
+
+    host = GitLabRepositoryHost(
+        "https://git.example",
+        "secret",
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    result = host.create_with_seed(
+        HostedRepositoryRequest(9, "Research", "research", "main", provider_id="42"),
+        (
+            RepositorySeedFile("README.md", "# Research\n"),
+            RepositorySeedFile(".homebrew-mlflow.json", sentinel),
+        ),
+    )
+
+    assert result.provider_id == "42"
+    assert [request.method for request in requests] == ["GET", "GET"]

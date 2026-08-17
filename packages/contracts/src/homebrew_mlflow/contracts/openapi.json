@@ -217,6 +217,13 @@
         "responses": {"200": {"description": "Archived Repository", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/RepositoryResponse"}}}}, "403": {"description": "Maintainer required", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorEnvelope"}}}}}
       }
     },
+    "/api/v1/projects/{project_id}/repositories/{repository_id}/retry-provisioning": {
+      "post": {
+        "operationId": "retryRepositoryProvisioning", "summary": "Retry failed Repository provisioning", "security": [{"bearerAuth": []}],
+        "parameters": [{"name": "project_id", "in": "path", "required": true, "schema": {"type": "string"}}, {"name": "repository_id", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "responses": {"202": {"description": "Repository provisioning retry accepted", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/RepositoryResponse"}}}}, "403": {"description": "Maintainer required", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorEnvelope"}}}}, "409": {"description": "Repository is not failed", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorEnvelope"}}}}}
+      }
+    },
     "/api/v1/projects/{project_id}/pipeline-definitions": {
       "get": {
         "operationId": "listPipelineDefinitions", "summary": "List project Pipeline Definitions", "security": [{"bearerAuth": []}],
@@ -620,6 +627,14 @@
         }
       }
     },
+    "/api/v1/setup/status": {
+      "get": {
+        "operationId": "getInstallationStatus",
+        "summary": "Get first-run installation claim status",
+        "security": [{"bearerAuth": []}],
+        "responses": {"200": {"description": "Installation status", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/InstallationStatusResponse"}}}}}
+      }
+    },
     "/health/live": {
       "get": {
         "operationId": "getLiveness",
@@ -785,7 +800,7 @@
         "properties": {
           "organization_id": {"type": "string", "pattern": "^org_[0-9A-HJKMNP-TV-Z]{26}$"},
           "name": {"type": "string", "minLength": 1, "maxLength": 200},
-          "slug": {"type": "string", "minLength": 1, "maxLength": 100}
+          "slug": {"type": "string", "minLength": 1, "maxLength": 100, "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"}
         }
       },
       "CreateRepositoryRequest": {
@@ -1111,6 +1126,11 @@
           "principal_id": {"type": "string", "pattern": "^principal_[0-9A-HJKMNP-TV-Z]{26}$"},
           "role": {"type": "string", "const": "admin"}
         }
+      },
+      "InstallationStatusResponse": {
+        "type": "object", "additionalProperties": false,
+        "required": ["claimed"],
+        "properties": {"claimed": {"type": "boolean"}}
       },
       "SessionResponse": {
         "type": "object",

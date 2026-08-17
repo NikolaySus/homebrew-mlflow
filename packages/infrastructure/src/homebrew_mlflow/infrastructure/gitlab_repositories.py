@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from urllib.parse import quote
 
 import httpx
 from homebrew_mlflow.application import (
@@ -14,6 +15,7 @@ from homebrew_mlflow.application import (
 class GitLabRepositoryProvisioningError(RuntimeError):
     message: str
     provider_id: str | None = None
+    failure_code: str = "template_commit_failed"
 
     def __str__(self) -> str:
         if self.provider_id is None:
@@ -41,20 +43,27 @@ class GitLabRepositoryHost:
         readme = next((file for file in files if file.path == "README.md"), None)
         if readme is None:
             raise GitLabRepositoryProvisioningError(
-                "repository template must contain README.md to initialize the default branch"
+                "repository template must contain README.md to initialize the default branch",
+                failure_code="template_invalid",
             )
 
-        response = self._client.post(
-            f"{self._base_url}/api/v4/projects",
-            headers=self._headers,
-            json={
-                "name": request.name,
-                "path": request.slug,
-                "namespace_id": request.namespace_id,
-                "default_branch": request.default_branch,
-                "initialize_with_readme": True,
-            },
-        )
+        if request.provider_id is None:
+            response = self._client.post(
+                f"{self._base_url}/api/v4/projects",
+                headers=self._headers,
+                json={
+                    "name": request.name,
+                    "path": request.slug,
+                    "namespace_id": request.namespace_id,
+                    "default_branch": request.default_branch,
+                    "initialize_with_readme": True,
+                },
+            )
+        else:
+            response = self._client.get(
+                f"{self._base_url}/api/v4/projects/{request.provider_id}",
+                headers=self._headers,
+            )
         response.raise_for_status()
         payload = response.json()
         try:
@@ -69,8 +78,37 @@ class GitLabRepositoryHost:
             )
         except (KeyError, TypeError) as error:
             raise GitLabRepositoryProvisioningError(
-                "GitLab returned an invalid project response"
+                "GitLab returned an invalid project response",
+                provider_id=request.provider_id,
+                failure_code="provider_response_invalid",
             ) from error
+
+        if request.provider_id is not None:
+            sentinel = next(
+                (file for file in files if file.path == ".homebrew-mlflow.json"), None
+            )
+            if sentinel is None:
+                raise GitLabRepositoryProvisioningError(
+                    "repository template omitted its platform sentinel",
+                    provider_id=provider_id,
+                    failure_code="template_invalid",
+                )
+            existing = self._client.get(
+                f"{self._base_url}/api/v4/projects/{provider_id}/repository/files/"
+                f"{quote(sentinel.path, safe='')}/raw",
+                headers=self._headers,
+                params={"ref": default_branch},
+            )
+            if existing.status_code == 200:
+                if existing.text == sentinel.content:
+                    return hosted
+                raise GitLabRepositoryProvisioningError(
+                    "existing GitLab project belongs to a different platform resource",
+                    provider_id=provider_id,
+                    failure_code="repository_sentinel_mismatch",
+                )
+            if existing.status_code != 404:
+                existing.raise_for_status()
 
         actions = [
             {

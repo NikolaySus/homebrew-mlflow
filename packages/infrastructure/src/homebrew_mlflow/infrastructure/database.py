@@ -1285,6 +1285,7 @@ class SqlAlchemyProvisioningStore:
             repository_slug=repository.slug,
             default_branch=repository.default_branch,
             namespace_id=project.gitlab_namespace_id,
+            repository_provider_id=repository.provider_id,
         )
 
     def complete(
@@ -1591,6 +1592,25 @@ class SqlAlchemyRepositoryUnitOfWork:
             raise ValueError("repository does not exist")
         row.state = repository.state.value
         row.failure_code = repository.failure_code
+
+    def retry_provisioning(self, repository: GitRepository) -> None:
+        row = self._session.scalar(
+            select(GitRepositoryRow).where(GitRepositoryRow.public_id == str(repository.id))
+        )
+        if row is None:
+            raise ValueError("repository does not exist")
+        project = self._session.get(ResearchProjectRow, row.project_id)
+        if project is None:
+            raise ValueError("repository project does not exist")
+        row.state = RepositoryState.PROVISIONING.value
+        row.failure_code = None
+        row.claimed_at = None
+        row.claimed_by = None
+        if project.state == ProjectState.FAILED.value:
+            project.state = ProjectState.PROVISIONING.value
+            project.failure_code = None
+            project.claimed_at = None
+            project.claimed_by = None
 
     def append_audit(self, event: AuditEvent) -> None:
         SqlAlchemyProjectUnitOfWork(self._session).append_audit(event)

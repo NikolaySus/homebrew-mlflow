@@ -102,6 +102,11 @@ class GitRepository:
             provider_id=provider_id or self.provider_id,
         )
 
+    def retry_provisioning(self) -> GitRepository:
+        if self.state is not RepositoryState.FAILED:
+            raise InvalidRepositoryTransition("only a failed repository can be retried")
+        return replace(self, state=RepositoryState.PROVISIONING, failure_code=None)
+
     def archive(self) -> GitRepository:
         if self.state is RepositoryState.ARCHIVED:
             return self

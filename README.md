@@ -56,3 +56,15 @@ The checked-in `repository_template/` is the source for new GitLab research repo
 provisioning renders deployment-specific platform, DVC, and object-store values and commits the complete
 seed through GitLab. The template includes agent guidance, credential-aware DVC/AWS configuration,
 cross-platform publication scripts, a local Run coordinator, and a safe MLflow autologging example.
+
+Create research projects through the platform web UI or CLI rather than GitLab's project wizard:
+
+```powershell
+homebrew-mlflow project create --name "Protein Folding" --clone-to .\protein-folding
+homebrew-mlflow project status protein-folding
+```
+
+Creation provisions one private, seeded default repository asynchronously. The CLI waits for that
+repository by default; use `--no-wait` for automation and `project retry` after a reported provisioning
+failure. GitLab-native templates do not create the platform's project, authorization, storage, or
+provenance records and are therefore not a supported creation boundary.

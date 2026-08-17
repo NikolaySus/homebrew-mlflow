@@ -42,3 +42,8 @@ def test_failed_repository_retains_provider_id_for_retry_and_drift_visibility() 
     assert failed.state is RepositoryState.FAILED
     assert failed.provider_id == "42"
     assert failed.failure_code == "template_commit_failed"
+
+    retried = failed.retry_provisioning()
+    assert retried.state is RepositoryState.PROVISIONING
+    assert retried.provider_id == "42"
+    assert retried.failure_code is None

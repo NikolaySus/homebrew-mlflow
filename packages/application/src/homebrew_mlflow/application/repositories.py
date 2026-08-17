@@ -44,6 +44,7 @@ class HostedRepositoryRequest:
     name: str
     slug: str
     default_branch: str
+    provider_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,6 +76,8 @@ class RepositoryUnitOfWork(Protocol):
     def repository(self, repository_id: PublicId) -> GitRepository | None: ...
 
     def save_repository(self, repository: GitRepository) -> None: ...
+
+    def retry_provisioning(self, repository: GitRepository) -> None: ...
 
     def append_audit(self, event: AuditEvent) -> None: ...
 
@@ -146,6 +149,40 @@ class RepositoryService:
         )
         self._uow.commit()
         return archived
+
+    def retry_provisioning(
+        self,
+        actor_id: PublicId,
+        project_id: PublicId,
+        repository_id: PublicId,
+        request_id: PublicId,
+        now: datetime,
+    ) -> GitRepository:
+        if self._uow.project_role(project_id, actor_id) is not ProjectRole.MAINTAINER:
+            raise AuthorizationDenied("project Maintainer role is required")
+        repository = self._uow.repository(repository_id)
+        if repository is None or repository.project_id != project_id:
+            raise ValueError("repository does not exist in the selected project")
+        try:
+            retried = repository.retry_provisioning()
+        except ValueError as error:
+            raise ResourceConflict("only failed repository provisioning can be retried") from error
+        self._uow.retry_provisioning(retried)
+        self._uow.append_audit(
+            AuditEvent(
+                actor_principal_id=actor_id,
+                action="repository.provisioning_retry",
+                resource_type="git_repository",
+                resource_id=repository.id,
+                outcome="success",
+                request_id=request_id,
+                project_id=project_id,
+                safe_metadata={"previous_failure_code": repository.failure_code},
+                occurred_at=now,
+            )
+        )
+        self._uow.commit()
+        return retried
 
 
 @dataclass(frozen=True, slots=True)

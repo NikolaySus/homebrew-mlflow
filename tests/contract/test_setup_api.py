@@ -103,6 +103,10 @@ def test_authenticated_user_claims_installation_once(monkeypatch) -> None:  # ty
     headers = {"Authorization": f"Bearer {token}"}
     client = TestClient(create_app())
 
+    status_before = client.get("/api/v1/setup/status", headers=headers)
+    assert status_before.status_code == 200
+    assert status_before.json() == {"claimed": False}
+
     response = client.post(
         "/api/v1/setup/claim",
         headers=headers,
@@ -115,6 +119,7 @@ def test_authenticated_user_claims_installation_once(monkeypatch) -> None:  # ty
     assert response.status_code == 200
     assert response.json()["principal_id"] == str(principal.id)
     organization_id = response.json()["organization_id"]
+    assert client.get("/api/v1/setup/status", headers=headers).json() == {"claimed": True}
 
     project = client.post(
         "/api/v1/projects",
@@ -128,9 +133,28 @@ def test_authenticated_user_claims_installation_once(monkeypatch) -> None:  # ty
     assert project.status_code == 202
     assert project.json()["default_repository"]["state"] == "provisioning"
     assert project.json()["default_repository"]["slug"] == "protein-folding"
+    repository_id = project.json()["default_repository"]["id"]
     with Session(engine) as session:
         assert session.scalar(select(func.count()).select_from(ResearchProjectRow)) == 1
         assert session.scalar(select(func.count()).select_from(GitRepositoryRow)) == 1
+        project_row = session.scalar(select(ResearchProjectRow))
+        repository_row = session.scalar(select(GitRepositoryRow))
+        assert project_row is not None and repository_row is not None
+        project_row.state = "failed"
+        project_row.failure_code = "template_commit_failed"
+        repository_row.state = "failed"
+        repository_row.failure_code = "template_commit_failed"
+        repository_row.provider_id = "9"
+        session.commit()
+
+    retry = client.post(
+        f"/api/v1/projects/{project.json()['id']}/repositories/"
+        f"{repository_id}/retry-provisioning",
+        headers=headers,
+    )
+    assert retry.status_code == 202
+    assert retry.json()["state"] == "provisioning"
+    assert retry.json()["failure_code"] is None
 
     with Session(engine) as session:
         coordinator = ProjectProvisioningCoordinator(

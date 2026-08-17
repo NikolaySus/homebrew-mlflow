@@ -30,7 +30,11 @@ class CreateProjectRequest(BaseModel):
 
     organization_id: str
     name: str = Field(min_length=1, max_length=200)
-    slug: str = Field(min_length=1, max_length=100)
+    slug: str = Field(
+        min_length=1,
+        max_length=100,
+        pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$",
+    )
 
 
 class CreateRepositoryRequest(BaseModel):
@@ -214,6 +218,35 @@ def create_repository(
             ),
         )
     return _repository_response(repository)
+
+
+@router.post(
+    "/{project_id}/repositories/{repository_id}/retry-provisioning",
+    response_model=RepositoryResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def retry_repository_provisioning(
+    project_id: str,
+    repository_id: str,
+    request: Request,
+    claims: Annotated[AccessTokenClaims, Depends(platform_claims)],
+) -> RepositoryResponse:
+    try:
+        project = PublicId(ResourceKind.PROJECT, project_id)
+        repository = PublicId(ResourceKind.REPOSITORY, repository_id)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail="repository_not_found") from error
+    with create_session(get_settings().database_url) as session:
+        retried = RepositoryService(
+            SqlAlchemyRepositoryUnitOfWork(session)
+        ).retry_provisioning(
+            claims.principal_id,
+            project,
+            repository,
+            PublicId(ResourceKind.REQUEST, request.state.request_id),
+            datetime.now(UTC),
+        )
+    return _repository_response(retried)
 
 
 @router.get("/{project_id}/repositories", response_model=list[RepositoryResponse])

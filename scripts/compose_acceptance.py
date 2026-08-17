@@ -136,6 +136,8 @@ def main() -> int:
     }
     contract = json.loads(responses["openapi"])
     required_paths = {
+        "/api/v1/setup/status",
+        "/api/v1/projects/{project_id}/repositories/{repository_id}/retry-provisioning",
         "/api/v1/projects/{project_id}/runs",
         "/api/v1/projects/{project_id}/environment-specifications",
         "/api/v1/projects/{project_id}/publication-operations",

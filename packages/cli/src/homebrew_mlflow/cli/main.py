@@ -3,11 +3,13 @@ from __future__ import annotations
 import json
 import os
 import platform
+import re
 import secrets
 import shutil
 import subprocess
 import threading
 import time
+import unicodedata
 import webbrowser
 from pathlib import Path
 from typing import Annotated, cast
@@ -27,6 +29,8 @@ publication_app = typer.Typer(no_args_is_help=True)
 app.add_typer(publication_app, name="publication")
 artifact_app = typer.Typer(no_args_is_help=True)
 app.add_typer(artifact_app, name="artifact")
+project_app = typer.Typer(no_args_is_help=True)
+app.add_typer(project_app, name="project")
 
 
 def _config_path() -> Path:
@@ -70,6 +74,95 @@ def _refresh_session(client: httpx.Client, server: str) -> dict[str, object]:
         raise RuntimeError("platform returned an invalid refresh response")
     _store_refresh(server, replacement)
     return session
+
+
+def _project_slug(name: str) -> str:
+    ascii_name = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode()
+    return re.sub(r"[^a-z0-9]+", "-", ascii_name.lower()).strip("-")
+
+
+def _project_server(server: str | None) -> str:
+    configured = server or _configured_server()
+    if configured is None:
+        raise typer.BadParameter("configure a server with login --server first")
+    return configured.rstrip("/")
+
+
+def _project_headers(session: dict[str, object]) -> dict[str, str]:
+    access = session.get("access_token")
+    if not isinstance(access, str):
+        raise RuntimeError("platform returned an invalid access token")
+    return {"Authorization": f"Bearer {access}"}
+
+
+def _resolve_project(
+    client: httpx.Client,
+    server: str,
+    headers: dict[str, str],
+    reference: str,
+) -> dict[str, object]:
+    response = client.get(f"{server}/api/v1/projects", headers=headers)
+    response.raise_for_status()
+    matches = [
+        value
+        for value in response.json()
+        if value.get("id") == reference or value.get("slug") == reference
+    ]
+    if len(matches) != 1:
+        raise typer.BadParameter(f"project {reference!r} was not found or is ambiguous")
+    return cast(dict[str, object], matches[0])
+
+
+def _project_repositories(
+    client: httpx.Client,
+    server: str,
+    headers: dict[str, str],
+    project_id: str,
+) -> list[dict[str, object]]:
+    response = client.get(
+        f"{server}/api/v1/projects/{project_id}/repositories", headers=headers
+    )
+    response.raise_for_status()
+    return cast(list[dict[str, object]], response.json())
+
+
+def _wait_for_repository(
+    client: httpx.Client,
+    server: str,
+    headers: dict[str, str],
+    project_id: str,
+    repository_id: str,
+    timeout: int,
+) -> dict[str, object]:
+    deadline = time.monotonic() + timeout
+    last_state = ""
+    while time.monotonic() < deadline:
+        repositories = _project_repositories(client, server, headers, project_id)
+        repository = next(
+            (value for value in repositories if value.get("id") == repository_id), None
+        )
+        if repository is None:
+            raise RuntimeError("created repository disappeared from the platform")
+        state = str(repository.get("state", "unknown"))
+        if state != last_state:
+            typer.echo(f"Repository provisioning: {state}")
+            last_state = state
+        if state == "active":
+            return repository
+        if state == "failed":
+            code = str(repository.get("failure_code") or "unknown")
+            raise RuntimeError(f"repository provisioning failed: {code}")
+        time.sleep(2)
+    raise RuntimeError(f"repository provisioning did not finish within {timeout} seconds")
+
+
+def _print_repository(repository: dict[str, object]) -> None:
+    typer.echo(
+        f"repository={repository.get('id')} state={repository.get('state')} "
+        f"gitlab={repository.get('web_url') or '-'}"
+    )
+    typer.echo(f"ssh={repository.get('ssh_clone_url') or '-'}")
+    typer.echo(f"https={repository.get('http_clone_url') or '-'}")
 
 
 @app.command()
@@ -165,6 +258,149 @@ def claim_installation(
         f"Installation claimed; organization={payload['organization_id']}, "
         f"role={payload['role']}."
     )
+
+
+@project_app.command("create")
+def project_create(
+    name: Annotated[str, typer.Option("--name", help="Research project name")],
+    slug: Annotated[str | None, typer.Option("--slug")] = None,
+    clone_to: Annotated[Path | None, typer.Option("--clone-to")] = None,
+    no_wait: Annotated[bool, typer.Option("--no-wait")] = False,
+    timeout: Annotated[int, typer.Option("--timeout", min=1)] = 300,
+    server: Annotated[str | None, typer.Option("--server")] = None,
+) -> None:
+    """Create a research project and its seeded default repository."""
+    if no_wait and clone_to is not None:
+        raise typer.BadParameter("--clone-to cannot be combined with --no-wait")
+    normalized_slug = (slug or _project_slug(name)).strip().lower()
+    if re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", normalized_slug) is None:
+        raise typer.BadParameter(
+            "slug must contain lowercase ASCII letters, digits, and single hyphens"
+        )
+    normalized = _project_server(server)
+    with httpx.Client(timeout=15) as client:
+        session = _refresh_session(client, normalized)
+        headers = _project_headers(session)
+        organization_response = client.get(
+            f"{normalized}/api/v1/organization", headers=headers
+        )
+        organization_response.raise_for_status()
+        organization_id = organization_response.json()["id"]
+        response = client.post(
+            f"{normalized}/api/v1/projects",
+            headers=headers,
+            json={
+                "organization_id": organization_id,
+                "name": name,
+                "slug": normalized_slug,
+            },
+        )
+        response.raise_for_status()
+        created = cast(dict[str, object], response.json())
+        repository = cast(dict[str, object], created["default_repository"])
+        project_id = str(created["id"])
+        repository_id = str(repository["id"])
+        typer.echo(
+            f"Created project={project_id} slug={normalized_slug} "
+            f"repository={repository_id}."
+        )
+        if no_wait:
+            return
+        repository = _wait_for_repository(
+            client, normalized, headers, project_id, repository_id, timeout
+        )
+    _print_repository(repository)
+    if clone_to is not None:
+        ssh_url = repository.get("ssh_clone_url")
+        if not isinstance(ssh_url, str) or not ssh_url:
+            raise RuntimeError("active repository omitted its SSH clone URL")
+        result = subprocess.run(
+            ["git", "clone", ssh_url, str(clone_to)], check=False
+        )
+        if result.returncode != 0:
+            raise RuntimeError(
+                "project was created, but git clone failed; verify your GitLab SSH key"
+            )
+
+
+@project_app.command("list")
+def project_list(
+    server: Annotated[str | None, typer.Option("--server")] = None,
+) -> None:
+    """List research projects visible to the current principal."""
+    normalized = _project_server(server)
+    with httpx.Client(timeout=15) as client:
+        headers = _project_headers(_refresh_session(client, normalized))
+        response = client.get(f"{normalized}/api/v1/projects", headers=headers)
+        response.raise_for_status()
+        projects = cast(list[dict[str, object]], response.json())
+    if not projects:
+        typer.echo("No research projects.")
+        return
+    for project in projects:
+        typer.echo(
+            f"{project.get('id')}\t{project.get('slug')}\t{project.get('state')}\t"
+            f"{project.get('name')}"
+        )
+
+
+@project_app.command("status")
+def project_status(
+    project: Annotated[str, typer.Argument(help="Project ID or exact slug")],
+    server: Annotated[str | None, typer.Option("--server")] = None,
+) -> None:
+    """Show project and repository provisioning status."""
+    normalized = _project_server(server)
+    with httpx.Client(timeout=15) as client:
+        headers = _project_headers(_refresh_session(client, normalized))
+        selected = _resolve_project(client, normalized, headers, project)
+        repositories = _project_repositories(
+            client, normalized, headers, str(selected["id"])
+        )
+    typer.echo(
+        f"project={selected.get('id')} slug={selected.get('slug')} "
+        f"state={selected.get('state')}"
+    )
+    for repository in repositories:
+        _print_repository(repository)
+        if repository.get("failure_code"):
+            typer.echo(f"failure={repository['failure_code']}")
+
+
+@project_app.command("retry")
+def project_retry(
+    project: Annotated[str, typer.Argument(help="Project ID or exact slug")],
+    no_wait: Annotated[bool, typer.Option("--no-wait")] = False,
+    timeout: Annotated[int, typer.Option("--timeout", min=1)] = 300,
+    server: Annotated[str | None, typer.Option("--server")] = None,
+) -> None:
+    """Retry the failed default-repository provisioning operation."""
+    normalized = _project_server(server)
+    with httpx.Client(timeout=15) as client:
+        headers = _project_headers(_refresh_session(client, normalized))
+        selected = _resolve_project(client, normalized, headers, project)
+        project_id = str(selected["id"])
+        failed = [
+            value
+            for value in _project_repositories(client, normalized, headers, project_id)
+            if value.get("state") == "failed"
+        ]
+        if len(failed) != 1:
+            raise typer.BadParameter("project must have exactly one failed repository")
+        repository_id = str(failed[0]["id"])
+        response = client.post(
+            f"{normalized}/api/v1/projects/{project_id}/repositories/"
+            f"{repository_id}/retry-provisioning",
+            headers=headers,
+        )
+        response.raise_for_status()
+        typer.echo(f"Retry queued for repository={repository_id}.")
+        if no_wait:
+            return
+        repository = _wait_for_repository(
+            client, normalized, headers, project_id, repository_id, timeout
+        )
+    _print_repository(repository)
 
 
 @app.command()
