@@ -34,6 +34,38 @@ def test_device_start_uses_gitlab_protocol() -> None:
     assert authorization.interval == 5
 
 
+def test_device_start_rewrites_internal_verification_urls() -> None:
+    transport = httpx.MockTransport(
+        lambda _request: httpx.Response(
+            200,
+            json={
+                "device_code": "secret-device-code",
+                "user_code": "ABCD1234",
+                "verification_uri": "https://gitlab/oauth/device",
+                "verification_uri_complete": (
+                    "https://gitlab/oauth/device?user_code=ABCD1234"
+                ),
+                "expires_in": 300,
+                "interval": 5,
+            },
+        )
+    )
+    client = GitLabDeviceOAuthClient(
+        "http://gitlab",
+        "client-id",
+        "client-secret",
+        public_base_url="https://git.ml.spkya.ru",
+        client=httpx.Client(transport=transport),
+    )
+
+    authorization = client.start()
+
+    assert authorization.verification_uri == "https://git.ml.spkya.ru/oauth/device"
+    assert authorization.verification_uri_complete == (
+        "https://git.ml.spkya.ru/oauth/device?user_code=ABCD1234"
+    )
+
+
 def test_pending_poll_returns_stable_status() -> None:
     transport = httpx.MockTransport(
         lambda _request: httpx.Response(400, json={"error": "authorization_pending"})

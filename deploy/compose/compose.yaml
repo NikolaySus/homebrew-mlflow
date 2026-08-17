@@ -34,6 +34,8 @@ services:
       HOMEBREW_MLFLOW_DVC_BUCKET: research
       HOMEBREW_MLFLOW_GITLAB_OAUTH_CLIENT_ID_FILE: /run/platform-secrets/gitlab-oauth-client-id
       HOMEBREW_MLFLOW_GITLAB_OAUTH_CLIENT_SECRET_FILE: /run/platform-secrets/gitlab-oauth-client-secret
+      HOMEBREW_MLFLOW_GITLAB_DEVICE_OAUTH_CLIENT_ID_FILE: /run/platform-secrets/gitlab-device-oauth-client-id
+      HOMEBREW_MLFLOW_GITLAB_DEVICE_OAUTH_CLIENT_SECRET_FILE: /run/platform-secrets/gitlab-device-oauth-client-secret
       HOMEBREW_MLFLOW_GITLAB_INTEGRATION_TOKEN_FILE: /run/platform-secrets/gitlab-integration-token
       HOMEBREW_MLFLOW_INFISICAL_RECONCILIATION_TOKEN_FILE: /run/platform-secrets/infisical-token
     volumes:
@@ -208,14 +210,17 @@ services:
       - ../bootstrap:/bootstrap:ro
     post_start:
       - command: >-
-          /bin/bash -lc 'chmod 0711 /run/platform-secrets;
+          /bin/bash -lc 'chmod 1733 /run/platform-secrets;
           if test -s /run/platform-secrets/gitlab-oauth-client-id
           && test -s /run/platform-secrets/gitlab-oauth-client-secret
+          && test -s /run/platform-secrets/gitlab-device-oauth-client-id
+          && test -s /run/platform-secrets/gitlab-device-oauth-client-secret
           && test -s /run/platform-secrets/gitlab-integration-token;
-          then exit 0; fi;
+          then chmod 0711 /run/platform-secrets; exit 0; fi;
           for attempt in {1..60}; do
-          gitlab-rails runner /bootstrap/gitlab.rb && exit 0;
-          sleep 5; done; exit 1'
+          if gitlab-rails runner /bootstrap/gitlab.rb;
+          then chmod 0711 /run/platform-secrets; exit 0; fi;
+          sleep 5; done; chmod 0711 /run/platform-secrets; exit 1'
         user: root
 
   gitlab-bootstrap:
@@ -225,11 +230,15 @@ services:
       - >-
         if test -s /run/platform-secrets/gitlab-oauth-client-id
         && test -s /run/platform-secrets/gitlab-oauth-client-secret
+        && test -s /run/platform-secrets/gitlab-device-oauth-client-id
+        && test -s /run/platform-secrets/gitlab-device-oauth-client-secret
         && test -s /run/platform-secrets/gitlab-integration-token;
         then exit 0; fi;
         for attempt in {1..60}; do
         if test -s /run/platform-secrets/gitlab-oauth-client-id
         && test -s /run/platform-secrets/gitlab-oauth-client-secret
+        && test -s /run/platform-secrets/gitlab-device-oauth-client-id
+        && test -s /run/platform-secrets/gitlab-device-oauth-client-secret
         && test -s /run/platform-secrets/gitlab-integration-token;
         then exit 0; fi; sleep 5; done; exit 1
     restart: on-failure

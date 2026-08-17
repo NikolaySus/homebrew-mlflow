@@ -407,8 +407,9 @@ def _gitlab_client() -> GitLabDeviceOAuthClient:
     settings = get_settings()
     return GitLabDeviceOAuthClient(
         str(settings.gitlab_base_url),
-        settings.gitlab_oauth_client_id,
-        settings.gitlab_oauth_client_secret.get_secret_value(),
+        settings.gitlab_device_oauth_client_id,
+        settings.gitlab_device_oauth_client_secret.get_secret_value(),
+        public_base_url=str(settings.gitlab_public_base_url),
     )
 
 

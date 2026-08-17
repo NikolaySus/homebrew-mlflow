@@ -8,10 +8,11 @@ oauth_redirect_uri = ENV.fetch(
 )
 client_id_path = File.join(secret_dir, "gitlab-oauth-client-id")
 client_secret_path = File.join(secret_dir, "gitlab-oauth-client-secret")
+device_client_id_path = File.join(secret_dir, "gitlab-device-oauth-client-id")
+device_client_secret_path = File.join(secret_dir, "gitlab-device-oauth-client-secret")
 token_path = File.join(secret_dir, "gitlab-integration-token")
 
 FileUtils.mkdir_p(secret_dir, mode: 0o700)
-FileUtils.chmod(0o711, secret_dir)
 
 def write_secret(path, value)
   File.open(path, File::WRONLY | File::CREAT | File::TRUNC, 0o600) do |file|
@@ -32,6 +33,21 @@ unless File.exist?(client_id_path) && File.exist?(client_secret_path)
   )
   write_secret(client_id_path, application.uid)
   write_secret(client_secret_path, application.plaintext_secret)
+end
+
+unless File.exist?(device_client_id_path) && File.exist?(device_client_secret_path)
+  Doorkeeper::Application.where(name: "Homebrew MLflow Device").destroy_all
+  application = Doorkeeper::Application.create!(
+    name: "Homebrew MLflow Device",
+    redirect_uri: oauth_redirect_uri,
+    scopes: "read_user",
+    organization_id: Organizations::Organization.find_by!(path: "default").id,
+    confidential: false,
+    trusted: true,
+    device_code_enabled: true
+  )
+  write_secret(device_client_id_path, application.uid)
+  write_secret(device_client_secret_path, application.plaintext_secret)
 end
 
 unless File.exist?(token_path)

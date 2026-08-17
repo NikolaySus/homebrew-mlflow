@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
@@ -47,9 +48,11 @@ class GitLabDeviceOAuthClient:
         client_id: str,
         client_secret: str,
         *,
+        public_base_url: str | None = None,
         client: httpx.Client | None = None,
     ) -> None:
         self._base_url = base_url.rstrip("/")
+        self._public_base_url = public_base_url.rstrip("/") if public_base_url else None
         self._client_id = client_id
         self._client_secret = client_secret
         self._client = client or httpx.Client(timeout=15)
@@ -65,8 +68,10 @@ class GitLabDeviceOAuthClient:
             return DeviceAuthorization(
                 device_code=payload["device_code"],
                 user_code=payload["user_code"],
-                verification_uri=payload["verification_uri"],
-                verification_uri_complete=payload["verification_uri_complete"],
+                verification_uri=self._public_url(payload["verification_uri"]),
+                verification_uri_complete=self._public_url(
+                    payload["verification_uri_complete"]
+                ),
                 expires_in=int(payload["expires_in"]),
                 interval=int(payload["interval"]),
             )
@@ -74,6 +79,15 @@ class GitLabDeviceOAuthClient:
             raise GitLabOAuthProtocolError(
                 "invalid GitLab device authorization response"
             ) from error
+
+    def _public_url(self, provider_url: str) -> str:
+        if not self._public_base_url:
+            return provider_url
+        public = urlsplit(self._public_base_url)
+        provider = urlsplit(provider_url)
+        return urlunsplit(
+            (public.scheme, public.netloc, provider.path, provider.query, provider.fragment)
+        )
 
     def poll(self, device_code: str) -> DevicePollResult:
         response = self._client.post(

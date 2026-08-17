@@ -88,6 +88,33 @@ def assert_bootstrapped_oauth() -> None:
     raise RuntimeError("OAuth start did not redirect")
 
 
+def assert_bootstrapped_device_oauth() -> None:
+    request = urllib.request.Request(
+        f"{PUBLIC_BASE_URL}/api/v1/auth/device/start", method="POST"
+    )
+    with urllib.request.urlopen(request, timeout=10) as response:  # noqa: S310
+        if response.status != 200:
+            raise RuntimeError(f"device OAuth start returned HTTP {response.status}")
+        payload = json.loads(response.read())
+    verification_uri = urlparse(str(payload.get("verification_uri", "")))
+    if verification_uri.netloc != urlparse(GITLAB_BASE_URL).netloc:
+        raise RuntimeError("device OAuth start did not use the Compose GitLab")
+    if not payload.get("device_code") or not payload.get("user_code"):
+        raise RuntimeError("device OAuth start omitted required codes")
+    poll_request = urllib.request.Request(
+        f"{PUBLIC_BASE_URL}/api/v1/auth/device/poll",
+        data=json.dumps({"device_code": payload["device_code"]}).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(poll_request, timeout=10) as response:  # noqa: S310
+        if response.status != 200:
+            raise RuntimeError(f"device OAuth poll returned HTTP {response.status}")
+        poll_payload = json.loads(response.read())
+    if poll_payload.get("status") != "authorization_pending":
+        raise RuntimeError("device OAuth poll did not report authorization_pending")
+
+
 def compose(*arguments: str, capture: bool = False) -> subprocess.CompletedProcess[str]:
     command = ["docker", "compose"]
     if COMPOSE_ENV_FILE:
@@ -121,6 +148,7 @@ def main() -> int:
     if b"gitlab" not in responses["gitlab"].lower():
         raise RuntimeError("GitLab sign-in page was not recognizable")
     assert_bootstrapped_oauth()
+    assert_bootstrapped_device_oauth()
     compose(
         "exec",
         "-T",

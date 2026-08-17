@@ -25,6 +25,10 @@ class Settings(BaseSettings):
     gitlab_oauth_client_id_file: Path | None = None
     gitlab_oauth_client_secret: SecretStr = SecretStr("development-client-secret")
     gitlab_oauth_client_secret_file: Path | None = None
+    gitlab_device_oauth_client_id: str = "development-device-client"
+    gitlab_device_oauth_client_id_file: Path | None = None
+    gitlab_device_oauth_client_secret: SecretStr = SecretStr("development-device-client-secret")
+    gitlab_device_oauth_client_secret_file: Path | None = None
     gitlab_integration_token: SecretStr = SecretStr("development-integration-token")
     gitlab_integration_token_file: Path | None = None
     infisical_base_url: AnyHttpUrl = AnyHttpUrl("http://infisical:8080")
@@ -65,8 +69,16 @@ class Settings(BaseSettings):
             self.gitlab_oauth_client_id = self._read_secret_file(
                 self.gitlab_oauth_client_id_file
             )
+        if self.gitlab_device_oauth_client_id_file is not None:
+            self.gitlab_device_oauth_client_id = self._read_secret_file(
+                self.gitlab_device_oauth_client_id_file
+            )
         for file_field, value_field in (
             (self.gitlab_oauth_client_secret_file, "gitlab_oauth_client_secret"),
+            (
+                self.gitlab_device_oauth_client_secret_file,
+                "gitlab_device_oauth_client_secret",
+            ),
             (self.gitlab_integration_token_file, "gitlab_integration_token"),
             (self.infisical_reconciliation_token_file, "infisical_reconciliation_token"),
         ):
@@ -81,9 +93,12 @@ class Settings(BaseSettings):
                 raise ValueError("production requires an explicit access-token key ID")
             if self.gitlab_oauth_client_id == "development-client":
                 raise ValueError("production requires explicit GitLab OAuth coordinates")
+            if self.gitlab_device_oauth_client_id == "development-device-client":
+                raise ValueError("production requires explicit GitLab device OAuth coordinates")
             insecure = {
                 self.access_token_signing_key.get_secret_value(),
                 self.gitlab_oauth_client_secret.get_secret_value(),
+                self.gitlab_device_oauth_client_secret.get_secret_value(),
                 self.gitlab_integration_token.get_secret_value(),
                 self.infisical_reconciliation_token.get_secret_value(),
                 self.bootstrap_token.get_secret_value(),
