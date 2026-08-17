@@ -1180,6 +1180,9 @@ class SqlAlchemyGitLabIdentityStore:
                 archived_at=None,
             )
         )
+        # No ORM relationship links these rows, so establish the referenced
+        # principal before inserting its identity binding.
+        self._session.flush()
         self._session.add(
             GitLabIdentityBindingRow(
                 principal_id=principal_key,

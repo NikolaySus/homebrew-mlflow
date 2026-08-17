@@ -12,6 +12,8 @@ from sqlalchemy.orm import Session
 
 def test_gitlab_subject_is_immutable_identity_and_profile_is_refreshed() -> None:
     engine = create_engine("sqlite://")
+    with engine.connect() as connection:
+        connection.exec_driver_sql("PRAGMA foreign_keys=ON")
     Base.metadata.create_all(engine)
     now = datetime(2026, 8, 17, tzinfo=UTC)
 
