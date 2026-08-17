@@ -88,7 +88,15 @@ def test_success_reads_identity_and_revokes_gitlab_token() -> None:
             return httpx.Response(200, json={"access_token": "temporary-gitlab-token"})
         if request.url.path == "/api/v4/user":
             assert request.headers["Authorization"] == "Bearer temporary-gitlab-token"
-            return httpx.Response(200, json={"id": 42, "username": "ada", "name": "Ada"})
+            return httpx.Response(
+                200,
+                json={
+                    "id": 42,
+                    "username": "ada",
+                    "email": "ada@example.com",
+                    "name": "Ada",
+                },
+            )
         if request.url.path == "/oauth/revoke":
             assert b"temporary-gitlab-token" in request.content
             return httpx.Response(200, json={})
@@ -103,6 +111,7 @@ def test_success_reads_identity_and_revokes_gitlab_token() -> None:
     result = client.poll("device-code")
     assert result.identity is not None
     assert result.identity.subject == "42"
+    assert result.identity.email == "ada@example.com"
     assert calls == ["/oauth/token", "/api/v4/user", "/oauth/revoke"]
 
 

@@ -28,5 +28,5 @@ Compose acceptance profile must exercise GitLab, Infisical, PostgreSQL, MinIO, A
 workers, and the latest quarterly restore drill must have a recorded successful result.
 Run its public-boundary smoke gate with `uv run python scripts/compose_acceptance.py` after
 `docker compose -f deploy/compose/compose.yaml up -d --build`.
-The gate also checks migration head `0023`, both workers, generated OAuth coordinates, authenticated
+The gate also checks migration head `0024`, both workers, generated OAuth coordinates, authenticated
 GitLab integration access, the Infisical credential file, and Prometheus rule syntax.

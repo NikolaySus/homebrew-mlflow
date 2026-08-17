@@ -298,6 +298,7 @@ def web_callback(
         principal = SqlAlchemyGitLabIdentityStore(session).resolve_or_create(
             str(payload["id"]),
             str(payload["username"]),
+            str(payload["email"]),
             str(payload.get("name") or payload["username"]),
             now,
         )
@@ -450,6 +451,7 @@ def device_poll(
         principal = SqlAlchemyGitLabIdentityStore(session).resolve_or_create(
             result.identity.subject,
             result.identity.username,
+            result.identity.email,
             result.identity.display_name,
             now,
         )

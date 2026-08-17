@@ -66,16 +66,22 @@ class InfisicalMembershipReconciler:
 
     def _reconcile(self, context: SecretContextRow) -> int:
         expected_rows = self._session.execute(
-            select(GitLabIdentityBindingRow.username, ProjectMembershipRow.role)
+            select(GitLabIdentityBindingRow.email, ProjectMembershipRow.role)
             .join(
                 ProjectMembershipRow,
                 ProjectMembershipRow.principal_id == GitLabIdentityBindingRow.principal_id,
             )
             .where(ProjectMembershipRow.project_id == context.project_id)
         ).all()
-        expected = {username: self._ROLE_SLUG[role] for username, role in expected_rows}
+        if any(email is None for email, _role in expected_rows):
+            raise RuntimeError("GitLab identity email has not been synchronized")
+        expected = {email: self._ROLE_SLUG[role] for email, role in expected_rows}
         managed_usernames = set(
-            self._session.scalars(select(GitLabIdentityBindingRow.username))
+            self._session.scalars(
+                select(GitLabIdentityBindingRow.email).where(
+                    GitLabIdentityBindingRow.email.is_not(None)
+                )
+            )
         )
         endpoint = f"{self._base_url}/api/v1/projects/{context.infisical_project_id}/memberships"
         response = httpx.get(
@@ -104,7 +110,7 @@ class InfisicalMembershipReconciler:
                 invited = httpx.post(
                     endpoint,
                     headers=infisical_authorization_headers(self._access_token),
-                    json={"emails": [], "usernames": missing, "roleSlugs": [role]},
+                    json={"emails": missing, "usernames": [], "roleSlugs": [role]},
                     timeout=20,
                 )
                 invited.raise_for_status()
@@ -115,7 +121,7 @@ class InfisicalMembershipReconciler:
                 "DELETE",
                 endpoint,
                 headers=infisical_authorization_headers(self._access_token),
-                json={"emails": [], "usernames": extra},
+                json={"emails": extra, "usernames": []},
                 timeout=20,
             )
             removed.raise_for_status()

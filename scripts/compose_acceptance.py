@@ -183,7 +183,7 @@ def main() -> int:
         "SELECT version_num FROM alembic_version",
         capture=True,
     ).stdout.strip()
-    if migration != "0023_automated_provenance":
+    if migration != "0024_gitlab_identity_email":
         raise RuntimeError(f"unexpected migration head: {migration}")
     running = set(compose("ps", "--status", "running", "--services", capture=True).stdout.split())
     required_services = {"api", "publication-worker-1", "publication-worker-2"}

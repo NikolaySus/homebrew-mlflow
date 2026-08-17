@@ -19,9 +19,15 @@ def test_gitlab_subject_is_immutable_identity_and_profile_is_refreshed() -> None
 
     with Session(engine) as session:
         store = SqlAlchemyGitLabIdentityStore(session)
-        first = store.resolve_or_create("100", "researcher", "Researcher", now)
+        first = store.resolve_or_create(
+            "100", "researcher", "researcher@example.com", "Researcher", now
+        )
         second = store.resolve_or_create(
-            "100", "renamed", "Renamed Researcher", now + timedelta(hours=1)
+            "100",
+            "renamed",
+            "renamed@example.com",
+            "Renamed Researcher",
+            now + timedelta(hours=1),
         )
 
         assert second.id == first.id
@@ -30,4 +36,5 @@ def test_gitlab_subject_is_immutable_identity_and_profile_is_refreshed() -> None
         binding = session.scalar(select(GitLabIdentityBindingRow))
         assert binding is not None
         assert binding.username == "renamed"
+        assert binding.email == "renamed@example.com"
         assert binding.last_seen_at.replace(tzinfo=UTC) == now + timedelta(hours=1)

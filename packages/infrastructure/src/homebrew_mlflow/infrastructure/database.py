@@ -121,6 +121,7 @@ class GitLabIdentityBindingRow(Base):
     principal_id: Mapped[UUID] = mapped_column(ForeignKey("principals.id"), primary_key=True)
     subject: Mapped[str] = mapped_column(String(200), unique=True)
     username: Mapped[str] = mapped_column(String(200))
+    email: Mapped[str | None] = mapped_column(String(320))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
@@ -1147,6 +1148,7 @@ class SqlAlchemyGitLabIdentityStore:
         self,
         subject: str,
         username: str,
+        email: str,
         display_name: str,
         now: datetime,
     ) -> Principal:
@@ -1158,6 +1160,7 @@ class SqlAlchemyGitLabIdentityStore:
             if row is None:
                 raise RuntimeError("GitLab identity binding refers to a missing principal")
             binding.username = username
+            binding.email = email
             binding.last_seen_at = now
             row.display_name = display_name
             self._session.commit()
@@ -1188,6 +1191,7 @@ class SqlAlchemyGitLabIdentityStore:
                 principal_id=principal_key,
                 subject=subject,
                 username=username,
+                email=email,
                 created_at=now,
                 last_seen_at=now,
             )

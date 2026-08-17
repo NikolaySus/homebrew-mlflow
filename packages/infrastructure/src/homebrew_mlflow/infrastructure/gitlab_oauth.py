@@ -21,6 +21,7 @@ class DeviceAuthorization:
 class GitLabIdentity:
     subject: str
     username: str
+    email: str
     display_name: str
 
 
@@ -118,6 +119,7 @@ class GitLabDeviceOAuthClient:
             identity = GitLabIdentity(
                 subject=str(user["id"]),
                 username=user["username"],
+                email=user["email"],
                 display_name=user.get("name") or user["username"],
             )
         except (KeyError, TypeError) as error:
