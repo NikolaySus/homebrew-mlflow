@@ -311,6 +311,12 @@ State transitions must be validated in the domain layer. Terminal Runs are immut
 
 The platform never launches the command.
 
+The Run helper exposes the rotating logging credential through a temporary token file and sets
+`MLFLOW_TRACKING_AUTH=homebrew-token-file`. The repository-pinned MLflow integration reads that file for
+every outgoing request, including requests from container children through a read-only bind mount. It must
+not cache, log, or copy the token into an environment variable. Missing, malformed, expired, or unauthorized
+tracking credentials produce non-retryable HTTP 401 or 403 responses rather than generic HTTP 500 errors.
+
 The clean, pushed source commit is validated before launch. After launch, command outcome and provenance
 quality are independent: the child exit code determines Run success, while provenance is `COMPLETE`,
 `INCOMPLETE`, or `INVALID`. A single DVC experiment ref created or advanced from the source commit is a
@@ -677,7 +683,7 @@ Required commands:
 | Command | Required behavior |
 | --- | --- |
 | `homebrew-mlflow login` | GitLab-backed terminal/device login, platform session creation, OS-keyring refresh storage, optional Infisical browser login coordination |
-| `homebrew-mlflow doctor` | Verify platform session, repository/project mapping, MLflow, the repository-pinned DVC executable and remote, and enabled Infisical CLI/version/session/access; never print secrets or mutate the remote |
+| `homebrew-mlflow doctor` | Verify platform session, repository/project mapping, MLflow service health, repository-runtime request-auth plugin loading, the tracking authentication boundary using a non-secret invalid token with retries disabled, the repository-pinned DVC executable and remote, and enabled Infisical CLI/version/session/access; never print secrets or mutate the remote |
 | `homebrew-mlflow repository configure` | Preflight and apply safe versioned migrations to platform-managed repository instructions/context, reconcile DVC/AWS configuration and standard local DVC ignores, install the generated AWS profile, and report tracked files that the researcher must review and commit |
 | `homebrew-mlflow run -- ...` | Create/finalize a local Run, supply scoped credentials, optionally wrap with `infisical run` |
 | `homebrew-mlflow logout` | Revoke current platform refresh family and remove local credential; do not silently log out Infisical |
@@ -874,7 +880,9 @@ Platform-created repositories include:
 
 Template v3 includes the standard `.dvc/.gitignore` and a project-scoped DVC remote. Template v4 makes every
 standalone DVC instruction uv-mediated and explains that `homebrew-mlflow run` already launches its child
-through the selected environment. Existing repositories adopt managed settings through ordered, idempotent
+through the selected environment. Template v5 pins the MLflow integration that supplies rotating token-file
+request authentication. Its migration updates only the managed dependency and corresponding locked wheel;
+the prior immutable wheel remains available for rollback. Existing repositories adopt managed settings through ordered, idempotent
 template migrations in `homebrew-mlflow repository configure`. Migrations use narrow known-fragment edits,
 preserve unrelated researcher text, preflight conflicts before tracked writes, refuse newer template versions,
 and update the sentinel only after the migration succeeds. The helper reports changes and never commits them.

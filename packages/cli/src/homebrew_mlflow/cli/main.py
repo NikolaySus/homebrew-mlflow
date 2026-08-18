@@ -597,6 +597,28 @@ def _runtime_dvc_version_command(root: Path, kind: str, name: str) -> list[str]:
     raise RuntimeError("container environments require an explicit DVC diagnostic command")
 
 
+def _runtime_mlflow_diagnostic_command(root: Path, kind: str, name: str) -> list[str]:
+    module = "homebrew_mlflow.mlflow_plugins.diagnostics"
+    if kind == "uv":
+        if shutil.which("uv") is None:
+            raise RuntimeError("uv is required by the selected environment")
+        return ["uv", "run", "--frozen", "--", "python", "-m", module]
+    if kind == "pip":
+        candidates = (
+            root / ".venv" / "Scripts" / "python.exe",
+            root / ".venv" / "bin" / "python",
+        )
+        executable = next((path for path in candidates if path.is_file()), None)
+        if executable is None:
+            raise RuntimeError("Python is unavailable in the repository .venv")
+        return [str(executable), "-m", module]
+    if kind == "conda":
+        return ["conda", "run", "-n", name, "--no-capture-output", "python", "-m", module]
+    if kind == "system":
+        return ["python", "-m", module]
+    raise RuntimeError("container environments require an explicit MLflow diagnostic command")
+
+
 def _probe_dvc_remote(configuration: DvcConfiguration) -> None:
     parsed = urlsplit(configuration.remote_url)
     if parsed.scheme != "s3" or not parsed.netloc or not parsed.path.strip("/"):
@@ -732,7 +754,11 @@ def doctor(
         configuration_response.raise_for_status()
         canonical = DvcConfiguration.from_payload(configuration_response.json())
         mlflow_response = client.get(f"{normalized}/mlflow/health")
-        result("mlflow", mlflow_response.is_success, f"status={mlflow_response.status_code}")
+        result(
+            "mlflow_service",
+            mlflow_response.is_success,
+            f"status={mlflow_response.status_code}",
+        )
 
     git_check = subprocess.run(
         ["git", "--version"], check=False, capture_output=True, text=True
@@ -749,6 +775,47 @@ def doctor(
     except (RuntimeError, OSError) as error:
         selection = None
         result("dvc", False, _safe_error(error))
+
+    if selection is not None:
+        diagnostic_path: Path | None = None
+        try:
+            descriptor, diagnostic_name = tempfile.mkstemp(
+                prefix="homebrew-mlflow-diagnostic-token-"
+            )
+            diagnostic_path = Path(diagnostic_name)
+            with os.fdopen(descriptor, "w", encoding="utf-8") as token_file:
+                token_file.write("diagnostic-invalid-token")
+            diagnostic_environment = os.environ.copy()
+            diagnostic_environment.update(
+                {
+                    "MLFLOW_TRACKING_URI": f"{normalized}/mlflow",
+                    "MLFLOW_TRACKING_AUTH": "homebrew-token-file",
+                    "MLFLOW_TRACKING_TOKEN_FILE": str(diagnostic_path),
+                    "MLFLOW_HTTP_REQUEST_MAX_RETRIES": "0",
+                }
+            )
+            diagnostic = subprocess.run(
+                _runtime_mlflow_diagnostic_command(
+                    root, selection.kind, selection.name
+                ),
+                cwd=root,
+                check=False,
+                capture_output=True,
+                text=True,
+                env=diagnostic_environment,
+            )
+            lines = set(diagnostic.stdout.splitlines())
+            result("mlflow_client_auth", "mlflow_client_auth=ok" in lines)
+            result(
+                "mlflow_auth_boundary",
+                diagnostic.returncode == 0 and "mlflow_auth_boundary=ok" in lines,
+            )
+        except (RuntimeError, OSError) as error:
+            result("mlflow_client_auth", False, _safe_error(error))
+            result("mlflow_auth_boundary", False, _safe_error(error))
+        finally:
+            if diagnostic_path is not None:
+                diagnostic_path.unlink(missing_ok=True)
 
     configuration_matches = False
     try:
@@ -1153,6 +1220,7 @@ def run(
             "HOMEBREW_MLFLOW_REPOSITORY_ID": repository["repository_id"],
             "HOMEBREW_MLFLOW_SERVER": server,
             "MLFLOW_TRACKING_URI": f"{server}/mlflow",
+            "MLFLOW_TRACKING_AUTH": "homebrew-token-file",
             "MLFLOW_TRACKING_TOKEN_FILE": str(token_path),
             "MLFLOW_RUN_ID": run_id,
             "MLFLOW_EXPERIMENT_ID": str(run_record["experiment_id"]),
@@ -1170,6 +1238,7 @@ def run(
             "HOMEBREW_MLFLOW_REPOSITORY_ID",
             "HOMEBREW_MLFLOW_SERVER",
             "MLFLOW_TRACKING_URI",
+            "MLFLOW_TRACKING_AUTH",
             "MLFLOW_TRACKING_TOKEN_FILE",
             "MLFLOW_RUN_ID",
             "MLFLOW_EXPERIMENT_ID",

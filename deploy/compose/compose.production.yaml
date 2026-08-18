@@ -13,7 +13,7 @@ services:
   api:
     environment:
       HOMEBREW_MLFLOW_ENVIRONMENT: production
-      HOMEBREW_MLFLOW_CLIENT_RECOMMENDED_VERSION: "0.2.3"
+      HOMEBREW_MLFLOW_CLIENT_RECOMMENDED_VERSION: "0.2.4"
       HOMEBREW_MLFLOW_PUBLIC_BASE_URL: https://ml.spkya.ru
       HOMEBREW_MLFLOW_GITLAB_PUBLIC_BASE_URL: https://git.ml.spkya.ru
       HOMEBREW_MLFLOW_DATABASE_URL: postgresql+psycopg://homebrew_mlflow:${PLATFORM_DB_PASSWORD:?set PLATFORM_DB_PASSWORD}@postgres:5432/homebrew_mlflow

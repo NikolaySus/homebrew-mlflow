@@ -11,12 +11,35 @@ import requests
 from flask import has_request_context, request
 from mlflow.entities import Experiment, Metric, Param, Run, RunData, RunInfo, RunTag
 from mlflow.exceptions import MlflowException
+from mlflow.protos.databricks_pb2 import (
+    CUSTOMER_UNAUTHORIZED,
+    INVALID_PARAMETER_VALUE,
+    PERMISSION_DENIED,
+    RESOURCE_DOES_NOT_EXIST,
+)
 from mlflow.store.tracking.abstract_store import AbstractStore
 
 
 def _unsupported(operation: str) -> MlflowException:
     return MlflowException(
         f"unsupported_operation: {operation} is not supported by Homebrew MLflow"
+    )
+
+
+def _platform_error(response: requests.Response) -> MlflowException:
+    error_code = {
+        400: INVALID_PARAMETER_VALUE,
+        401: CUSTOMER_UNAUTHORIZED,
+        403: PERMISSION_DENIED,
+        404: RESOURCE_DOES_NOT_EXIST,
+    }.get(response.status_code)
+    if error_code is None:
+        return MlflowException(
+            f"platform_request_failed: status={response.status_code}",
+        )
+    return MlflowException(
+        f"platform_request_failed: status={response.status_code}",
+        error_code=error_code,
     )
 
 
@@ -39,7 +62,16 @@ class HomebrewTrackingStore(AbstractStore):
             )
             authorization = f"Bearer {token}" if token else None
         if not authorization:
-            raise MlflowException("authentication_required: missing Run-scoped logging token")
+            raise MlflowException(
+                "authentication_required: missing Run-scoped logging token",
+                error_code=CUSTOMER_UNAUTHORIZED,
+            )
+        token = authorization.removeprefix("Bearer ")
+        if not authorization.startswith("Bearer ") or len(token.split(".")) != 3:
+            raise MlflowException(
+                "authentication_required: malformed Run-scoped logging token",
+                error_code=CUSTOMER_UNAUTHORIZED,
+            )
         return {"Authorization": authorization}
 
     def _bound_run_id(self) -> str:
@@ -55,7 +87,10 @@ class HomebrewTrackingStore(AbstractStore):
                 raise TypeError
             return run_id
         except (IndexError, KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
-            raise MlflowException("run_binding_required: malformed logging token") from error
+            raise MlflowException(
+                "run_binding_required: malformed logging token",
+                error_code=CUSTOMER_UNAUTHORIZED,
+            ) from error
 
     def _get(self, run_id: str) -> dict[str, Any]:
         response = requests.get(
@@ -63,7 +98,8 @@ class HomebrewTrackingStore(AbstractStore):
             headers=self._headers(),
             timeout=30,
         )
-        response.raise_for_status()
+        if not getattr(response, "ok", True):
+            raise _platform_error(response)
         return cast(dict[str, Any], response.json())
 
     def _batch(
@@ -92,7 +128,8 @@ class HomebrewTrackingStore(AbstractStore):
             },
             timeout=30,
         )
-        response.raise_for_status()
+        if not getattr(response, "ok", True):
+            raise _platform_error(response)
 
     def get_run(self, run_id: str) -> Run:
         payload = self._get(run_id)

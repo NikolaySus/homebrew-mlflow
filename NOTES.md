@@ -3,11 +3,36 @@
 These notes track reproducible platform or generated-workflow problems found while using this repository.
 User command mistakes and problems caused solely by an outdated local CLI are intentionally excluded.
 
+## 2026-08-19
+
+### Successful Run warns that all declared DVC outputs lack hashes
+
+**State:** Diagnosed as a non-fatal DVC workspace-apply warning; no missing provenance.
+
+Run `run_01M0BC5MBAN7F91E88Q3VBXZKS` completed its DVC experiment, updated `dvc.lock`, and finalized as
+succeeded. Immediately afterward, the wrapper warned that no file hash information was found for each of
+the four declared outputs. The files exist, `dvc status` reports the pipeline up to date, and DVC experiment
+revision `cb9b7433d815b2a6830ecda135b36cffccde021a` contains their hashes and metrics.
+
+The message is emitted by DVC while applying an experiment workspace, not by the platform's provenance
+capture. The platform correctly records the immutable experiment revision and does not trust client hashes
+as publication evidence, so suppressing the native warning or converting the Run to incomplete would hide
+useful DVC diagnostics without improving provenance.
+
+Recheck: final Run `run_01M0BCTCZ6YKTCXB3KWTQKBANE` recomputed the same stage and finalized without the
+warnings. A later, otherwise successful Run `run_01M0BE7RMA3X9RKWP4NEQX5CWA` reproduced the warning for
+all four declared outputs. DVC revision `d091d8127ec2d41739b37672e94375ff3808272c` contains their hashes,
+and both local status and the remote transfer are checked separately.
+
+Verification: a subprocess boundary test creates a tiny experiment with four declared outputs, reads the
+resulting experiment commit's `dvc.lock`, verifies every output hash against its workspace file, and confirms
+clean `dvc status`. The warning remains visible if DVC emits it.
+
 ## 2026-08-18
 
 ### Successful DVC push emits a credential-refresh traceback
 
-**State:** Deployed in CLI 0.2.3; awaiting a real DVC transfer verification.
+**State:** Not reproduced with CLI 0.2.3; long-transfer resolution remains unconfirmed.
 
 An approved five-object `dvc push` completed and returned exit code zero, but afterward aiobotocore attempted
 an advisory credential refresh and printed a full `CredentialRetrievalError` traceback caused by a TLS
@@ -18,14 +43,14 @@ Expected: advisory refresh should retry or fail quietly after a completed transf
 network errors should be summarized without a multi-page traceback that makes a successful upload appear
 failed.
 
-Verification: the helper now retries connection and TLS-establishment failures three times with bounded
-backoff, does not replay ambiguous read or HTTP failures, and emits a redacted one-line terminal error.
-Unit tests cover recovery, exhaustion, and non-retry behavior. CLI 0.2.3 installs successfully from the
-production index. A real DVC transfer remains required before marking this resolved.
+Recheck: direct credential issuance and `dvc status -c -r platform` both completed without a traceback under
+CLI 0.2.3. The 900-second STS lifetime equals botocore's advisory-refresh window, so even short operations
+exercise the advisory path. Another long transfer is still useful production confirmation, but is not
+required to prove that the CLI's bounded connection/TLS retry is active.
 
-### Direct MLflow logging is rejected by the platform proxy
+### Direct MLflow tracking is unusable from a managed Run
 
-**State:** Deployed; public Host verification passed, awaiting managed Run logging verification.
+**State:** Fixed in source for CLI 0.2.4 and plugin 0.1.1; deployment verification pending.
 
 During Run `run_01M0B1DTPGEHFW5YAA6ANR73PA`, the local DVC stage completed its computation but
 `mlflow.log_metrics` received HTTP 403 from `/mlflow/api/2.0/mlflow/runs/get` with `Invalid Host header -
@@ -35,14 +60,20 @@ Expected: the public tracking URL configured by `homebrew-mlflow run` is accepte
 reverse proxy, including the Host/forwarded-host combination. DVC-native metrics remain the workaround for
 this repository and are not duplicated through the fluent MLflow API.
 
-Verification: the rebuilt MLflow image accepts `ml.spkya.ru` on a tracking API path while rejecting an
-unlisted host with HTTP 403. Production now routes the formerly rejected API path into MLflow without an
-`Invalid Host` response, and the production Compose acceptance probe passes. A managed Run remains required
-before marking this resolved.
+Recheck: the public route no longer returns the invalid-Host rejection. However, a managed diagnostic that
+called `mlflow.get_run` and `mlflow.log_metric` produced no result after more than three minutes and required
+termination of its isolated local process tree. An unauthenticated read reaches the tracking service but
+returns HTTP 500 for a missing Run-scoped token rather than a normal authentication status. `doctor` still
+reports `mlflow=ok status=200`, so its health check does not establish usable tracking API access.
+
+Fix: managed Runs now select a request-auth plugin that reloads the rotating token file on every request,
+including inside containers. Authentication failures map to HTTP 401/403, avoiding MLflow's long retry path
+for HTTP 500. `doctor` separately reports service health, client plugin loading, and a non-mutating
+authentication-boundary probe with retries disabled.
 
 ### Service index omits a required repository dependency
 
-**State:** Resolved in the production package index.
+**State:** Resolved by the 0.2.3 deployment.
 
 The generated `pyproject.toml` requires `homebrew-mlflow-plugins==0.1.0` from the explicit platform index,
 but `https://ml.spkya.ru/packages/simple/homebrew-mlflow-plugins/` returns HTTP 404. Existing frozen
@@ -52,11 +83,8 @@ environments continue to work only when the wheel is already available from `uv.
 Expected: every package referenced by the current repository template and lock remains available from the
 service-hosted simple index, and a clean machine can run `uv sync --frozen` and author dependency changes.
 
-Verification: the reproducible plugin wheel matches the hash pinned by the repository template, the index
-builder publishes its project page and now rejects an incomplete first-party wheelhouse, and a rendered
-template completed a cache-disabled frozen sync against the locally served index. The production project
-page now returns HTTP 200, and `homebrew-mlflow-plugins==0.1.0` installs from that index on a clean Python
-environment.
+Verification: both the package index page and the exact locked wheel return HTTP 200, and `uv lock --check`
+successfully resolves all 166 locked packages.
 
 ### Generated DVC credentials cannot access the configured remote
 

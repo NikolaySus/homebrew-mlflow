@@ -97,7 +97,10 @@ def test_doctor_uses_pinned_dvc_and_probes_project_remote(
 
     def run(command: list[str], **_kwargs: object) -> SimpleNamespace:
         commands.append(command)
-        output = "3.67.1\n" if "dvc" in command else "git version 2.50.0\n"
+        if "homebrew_mlflow.mlflow_plugins.diagnostics" in command:
+            output = "mlflow_client_auth=ok\nmlflow_auth_boundary=ok\n"
+        else:
+            output = "3.67.1\n" if "dvc" in command else "git version 2.50.0\n"
         return SimpleNamespace(returncode=0, stdout=output, stderr="")
 
     probes: list[str] = []
@@ -120,4 +123,7 @@ def test_doctor_uses_pinned_dvc_and_probes_project_remote(
     assert result.exit_code == 0, result.output
     assert "readiness=ok" in result.output
     assert ["uv", "run", "--frozen", "--", "dvc", "--version"] in commands
+    assert "mlflow_service=ok status=200" in result.output
+    assert "mlflow_client_auth=ok" in result.output
+    assert "mlflow_auth_boundary=ok" in result.output
     assert probes == ["s3://research/dvc/pr_test"]

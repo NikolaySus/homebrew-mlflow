@@ -113,6 +113,7 @@ def test_run_preserves_child_success_with_workspace_changes(  # type: ignore[no-
         assert "hmrf_" not in json.dumps(kwargs.get("env", {}))
         token_file = Path(kwargs["env"]["MLFLOW_TRACKING_TOKEN_FILE"])
         assert token_file.read_text(encoding="utf-8") == "run-scoped-token"
+        assert kwargs["env"]["MLFLOW_TRACKING_AUTH"] == "homebrew-token-file"
         assert "MLFLOW_TRACKING_TOKEN" not in kwargs["env"]
         return subprocess.CompletedProcess(command, 0)
 

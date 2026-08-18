@@ -150,6 +150,36 @@ def test_repository_template_upgrade_preserves_custom_text_and_is_idempotent(
         "dvc status\ndvc push -r platform\ncustom rule\n",
         encoding="utf-8",
     )
+    (tmp_path / "pyproject.toml").write_text(
+        'dependencies = ["homebrew-mlflow-plugins==0.1.0"]\n', encoding="utf-8"
+    )
+    old_wheel = (
+        '    { url = "{{ platform_url }}/packages/files/'
+        'homebrew_mlflow_plugins-0.1.0-py3-none-any.whl", '
+        'hash = "sha256:efe3e890c1fe7002552f2611443aadf504e1d569a6d4888d6f193004147bcadd" },'
+    )
+    old_requirement = (
+        '    { name = "homebrew-mlflow-plugins", specifier = "==0.1.0", '
+        'index = "{{ platform_url }}/packages/simple/" }'
+    )
+    old_lock = '''[[package]]
+name = "homebrew-mlflow-plugins"
+version = "0.1.0"
+source = { registry = "{{ platform_url }}/packages/simple/" }
+dependencies = [
+    { name = "mlflow" },
+    { name = "requests" },
+]
+wheels = [
+''' + old_wheel + '''
+]
+
+[package.metadata]
+requires-dist = [
+''' + old_requirement + '''
+]
+'''
+    (tmp_path / "uv.lock").write_text(old_lock, encoding="utf-8")
 
     prepared = prepare_repository_template_upgrade(tmp_path)
     changed = prepared.apply()
@@ -159,13 +189,17 @@ def test_repository_template_upgrade_preserves_custom_text_and_is_idempotent(
         ".homebrew-mlflow.json",
         "README.md",
         "AGENTS.md",
+        "pyproject.toml",
+        "uv.lock",
     }
     assert second == ()
-    assert '"template_version": 4' in (tmp_path / ".homebrew-mlflow.json").read_text()
+    assert '"template_version": 5' in (tmp_path / ".homebrew-mlflow.json").read_text()
     assert "custom introduction" in (tmp_path / "README.md").read_text()
     assert "uv run --frozen dvc status" in (tmp_path / "README.md").read_text()
     assert "custom rule" in (tmp_path / "AGENTS.md").read_text()
     assert "uv run --frozen dvc dag" in (tmp_path / "AGENTS.md").read_text()
+    assert "homebrew-mlflow-plugins==0.1.1" in (tmp_path / "pyproject.toml").read_text()
+    assert "homebrew_mlflow_plugins-0.1.1" in (tmp_path / "uv.lock").read_text()
 
 
 def test_repository_template_upgrade_conflict_does_not_write(tmp_path: Path) -> None:
