@@ -5,6 +5,57 @@ User command mistakes and problems caused solely by an outdated local CLI are in
 
 ## 2026-08-18
 
+### Successful DVC push emits a credential-refresh traceback
+
+**State:** Fixed in CLI 0.2.3 source; awaiting deployed-client verification.
+
+An approved five-object `dvc push` completed and returned exit code zero, but afterward aiobotocore attempted
+an advisory credential refresh and printed a full `CredentialRetrievalError` traceback caused by a TLS
+handshake timeout in the credential helper. A subsequent `dvc status -c -r platform` confirmed that cache
+and remote were fully synchronized.
+
+Expected: advisory refresh should retry or fail quietly after a completed transfer, and normal transient
+network errors should be summarized without a multi-page traceback that makes a successful upload appear
+failed.
+
+Verification: the helper now retries connection and TLS-establishment failures three times with bounded
+backoff, does not replay ambiguous read or HTTP failures, and emits a redacted one-line terminal error.
+Unit tests cover recovery, exhaustion, and non-retry behavior. A real DVC transfer with the deployed CLI
+remains required before marking this resolved.
+
+### Direct MLflow logging is rejected by the platform proxy
+
+**State:** Fixed in deployment source; awaiting production verification.
+
+During Run `run_01M0B1DTPGEHFW5YAA6ANR73PA`, the local DVC stage completed its computation but
+`mlflow.log_metrics` received HTTP 403 from `/mlflow/api/2.0/mlflow/runs/get` with `Invalid Host header -
+possible DNS rebinding attack detected`. The platform then correctly retained the Run as failed.
+
+Expected: the public tracking URL configured by `homebrew-mlflow run` is accepted by MLflow through the
+reverse proxy, including the Host/forwarded-host combination. DVC-native metrics remain the workaround for
+this repository and are not duplicated through the fluent MLflow API.
+
+Verification: the rebuilt MLflow image accepts `ml.spkya.ru` on a tracking API path while rejecting an
+unlisted host with HTTP 403. Compose acceptance now probes an API path rather than the host-validation-
+exempt health endpoint. A managed production Run remains required before marking this resolved.
+
+### Service index omits a required repository dependency
+
+**State:** Fixed in package-build source; awaiting production publication.
+
+The generated `pyproject.toml` requires `homebrew-mlflow-plugins==0.1.0` from the explicit platform index,
+but `https://ml.spkya.ru/packages/simple/homebrew-mlflow-plugins/` returns HTTP 404. Existing frozen
+environments continue to work only when the wheel is already available from `uv.lock` and the local cache;
+`uv add` cannot resolve the project.
+
+Expected: every package referenced by the current repository template and lock remains available from the
+service-hosted simple index, and a clean machine can run `uv sync --frozen` and author dependency changes.
+
+Verification: the reproducible plugin wheel matches the hash pinned by the repository template, the index
+builder publishes its project page and now rejects an incomplete first-party wheelhouse, and a rendered
+template completed a cache-disabled frozen sync against the locally served index. The production index
+must still receive the rebuilt package artifacts before marking this resolved.
+
 ### Generated DVC credentials cannot access the configured remote
 
 **State:** Resolved by CLI/configuration v3 in 0.2.1.
@@ -63,7 +114,7 @@ committing the v3 migration, DVC inspection leaves the worktree clean.
 
 ### Run provenance rejects normal DVC experiment changes
 
-**State:** Confirmed, blocks the first meaningful Run.
+**State:** Resolved in CLI 0.2.2 and repository template v4.
 
 The Run wrapper starts successfully and its child `dvc exp run` completes, creates `dvc.lock`, produces the
 declared outputs, records the metric, and creates a named DVC experiment. During finalization, the wrapper
@@ -85,15 +136,23 @@ declared outputs produced by the command. The post-run check should verify that 
 treating expected DVC workspace changes as an automatic command failure; unexpected source changes should
 still be reported separately.
 
+Verification: retry Run `run_01M0B03AE93222XNYGF3B9D6CA` finalized as succeeded without a provenance
+warning. It captured named DVC experiment revision `ab1ff88e2a465297ac6c704c4b95940e72a65bd8`, retained
+`starter=1.0`, and left the Git worktree and DVC pipeline clean.
+
 ### Generated uv instructions can execute a global DVC on Windows
 
-**State:** Confirmed, causes environment/version drift.
+**State:** Resolved by repository template v4 guidance.
 
 The generated README runs `uv sync --frozen` and then shows plain `dvc` commands. On Windows, `uv sync`
 does not activate `.venv`; plain `dvc` can therefore select a global installation. In this test it selected
 global DVC 3.59.1 instead of the repository-pinned DVC 3.67.1 and failed inside the S3 credential subprocess
 path with `NotImplementedError`.
 
-Expected: generated commands should be environment-independent. Prefer `uv run --frozen dvc ...` (including
-inside the `homebrew-mlflow run` examples and publication scripts), or explicitly require and verify virtual
-environment activation.
+Expected: generated commands should be environment-independent. Use `uv run --frozen dvc ...` for standalone
+DVC commands; inside `homebrew-mlflow run`, keep the child as `dvc ...` and let the Run helper supply the
+declared uv environment.
+
+Verification: template v4 uses `uv run --frozen dvc ...` for standalone DVC commands and explicitly keeps
+the child command as plain `dvc ...` inside `homebrew-mlflow run`, where the Run helper supplies the selected
+uv environment itself.

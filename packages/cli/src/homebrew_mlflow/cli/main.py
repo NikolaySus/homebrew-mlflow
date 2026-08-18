@@ -820,27 +820,55 @@ def dvc_credentials(
         except RuntimeError as error:
             raise typer.BadParameter("configure a server with login first") from error
     normalized = configured.rstrip("/")
-    with httpx.Client(timeout=15) as client:
-        session = _refresh_session(client, normalized)
-        exchange = client.post(
-            f"{normalized}/api/v1/auth/exchange",
-            headers={"Authorization": f"Bearer {session['access_token']}"},
-            json={
-                "audience": "dvc-credentials",
-                "project_id": project,
-                "scopes": ["dvc_transfer"],
-            },
+    issued: httpx.Response | None = None
+    try:
+        with httpx.Client(timeout=httpx.Timeout(15, connect=5)) as client:
+            for delay in (0.25, 1.0, None):
+                try:
+                    session = _refresh_session(client, normalized)
+                    exchange = client.post(
+                        f"{normalized}/api/v1/auth/exchange",
+                        headers={"Authorization": f"Bearer {session['access_token']}"},
+                        json={
+                            "audience": "dvc-credentials",
+                            "project_id": project,
+                            "scopes": ["dvc_transfer"],
+                        },
+                    )
+                    exchange.raise_for_status()
+                    scoped_token = exchange.json().get("access_token")
+                    if not isinstance(scoped_token, str):
+                        raise RuntimeError("platform returned an invalid DVC access token")
+                    issued = client.post(
+                        f"{normalized}/api/v1/projects/{project}/dvc-credentials",
+                        headers={"Authorization": f"Bearer {scoped_token}"},
+                        params=(
+                            {"recovery_run_id": recovery_run}
+                            if recovery_run is not None
+                            else None
+                        ),
+                    )
+                    issued.raise_for_status()
+                    break
+                except (httpx.ConnectError, httpx.ConnectTimeout):
+                    if delay is None:
+                        raise
+                    time.sleep(delay)
+    except (httpx.ConnectError, httpx.ConnectTimeout) as error:
+        typer.echo(
+            "DVC credential request failed after 3 connection attempts "
+            f"({type(error).__name__}).",
+            err=True,
         )
-        exchange.raise_for_status()
-        scoped_token = exchange.json().get("access_token")
-        if not isinstance(scoped_token, str):
-            raise RuntimeError("platform returned an invalid DVC access token")
-        issued = client.post(
-            f"{normalized}/api/v1/projects/{project}/dvc-credentials",
-            headers={"Authorization": f"Bearer {scoped_token}"},
-            params={"recovery_run_id": recovery_run} if recovery_run is not None else None,
+        raise typer.Exit(1) from None
+    except httpx.HTTPError as error:
+        typer.echo(
+            f"DVC credential request failed ({type(error).__name__}).",
+            err=True,
         )
-        issued.raise_for_status()
+        raise typer.Exit(1) from None
+    if issued is None:
+        raise RuntimeError("platform did not return DVC credentials")
     payload = issued.json()
     required = {"Version", "AccessKeyId", "SecretAccessKey", "SessionToken", "Expiration"}
     if set(payload) != required:

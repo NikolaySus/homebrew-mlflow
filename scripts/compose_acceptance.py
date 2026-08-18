@@ -115,6 +115,15 @@ def assert_bootstrapped_device_oauth() -> None:
         raise RuntimeError("device OAuth poll did not report authorization_pending")
 
 
+def assert_mlflow_public_host_allowed() -> None:
+    try:
+        get(f"{PUBLIC_BASE_URL}/mlflow/api/2.0/mlflow/experiments/search")
+    except urllib.error.HTTPError as response:
+        body = response.read().decode("utf-8", errors="replace")
+        if response.code == 403 and "Invalid Host header" in body:
+            raise RuntimeError("MLflow rejected the configured public Host header") from response
+
+
 def compose(*arguments: str, capture: bool = False) -> subprocess.CompletedProcess[str]:
     command = ["docker", "compose"]
     if COMPOSE_ENV_FILE:
@@ -153,6 +162,7 @@ def main() -> int:
         raise RuntimeError("GitLab sign-in page was not recognizable")
     assert_bootstrapped_oauth()
     assert_bootstrapped_device_oauth()
+    assert_mlflow_public_host_allowed()
     compose(
         "exec",
         "-T",
@@ -183,7 +193,7 @@ def main() -> int:
         "SELECT version_num FROM alembic_version",
         capture=True,
     ).stdout.strip()
-    if migration != "0024_gitlab_identity_email":
+    if migration != "0025_run_provenance_status":
         raise RuntimeError(f"unexpected migration head: {migration}")
     running = set(compose("ps", "--status", "running", "--services", capture=True).stdout.split())
     required_services = {

@@ -20,6 +20,7 @@ Build the current-platform wheelhouse and static index with:
 ```powershell
 uv build --package homebrew-mlflow --out-dir build/wheels
 uv build --package homebrew-mlflow-contracts --out-dir build/wheels
+uv build --package homebrew-mlflow-plugins --out-dir build/wheels
 uv export --package homebrew-mlflow --no-dev --no-emit-workspace --output-file build/cli-requirements.txt
 uv run --with pip python -m pip download --require-hashes --only-binary=:all: -r build/cli-requirements.txt -d build/wheels
 uv run python scripts/build_package_index.py build/wheels build/packages

@@ -656,7 +656,7 @@ The finalizer atomically commits the Artifact Version, DVC identity, file index,
 
 Each project maps to one logical DVC storage namespace. Native DVC uses an AWS-compatible profile whose `credential_process` invokes a narrow machine-readable `homebrew-mlflow` subcommand.
 
-The response must follow the AWS credential-process JSON contract and contain temporary S3-compatible credentials only. The helper refreshes them automatically; no access key is written to `.dvc/config`, `.dvc/config.local`, `.env`, a shell profile, or generated UI command.
+The response must follow the AWS credential-process JSON contract and contain temporary S3-compatible credentials only. The helper refreshes them automatically and retries only failures known to occur before an HTTP request is delivered, such as connection and TLS-handshake failures. It MUST NOT retry ambiguous refresh responses that could replay a rotating credential. No access key is written to `.dvc/config`, `.dvc/config.local`, `.env`, a shell profile, or generated UI command.
 
 Researcher DVC credentials allow only the minimum required list/read/write operations, normally `ListBucket` constrained to the project prefix plus `GetObject` and `PutObject`. They MUST NOT allow `DeleteObject`, bucket administration, cross-project access, or destructive remote garbage collection.
 
@@ -666,7 +666,7 @@ Already-issued DVC credentials may remain usable for at most 15 minutes after me
 
 The product, service-hosted Python distribution, and executable are all `homebrew-mlflow`. Install as an isolated CLI with `uv tool install`; support `pipx` as fallback. Do not require installation into experiment virtual environments.
 
-Each deployment MUST expose an unauthenticated, read-only Python Simple Repository under `/packages/simple/` and immutable wheel files under `/packages/files/`. It contains the CLI and the locked transitive wheels for every supported Python/OS target. Installers use this service as their default index and MUST NOT fall back to public PyPI. There is no runtime package-upload endpoint.
+Each deployment MUST expose an unauthenticated, read-only Python Simple Repository under `/packages/simple/` and immutable wheel files under `/packages/files/`. It contains the CLI, its locked transitive wheels for every supported Python/OS target, and every platform package pinned by the current research-repository template, including the MLflow integration plugin. Index generation fails if a required first-party distribution is absent. Installers use this service as their default index and MUST NOT fall back to public PyPI. There is no runtime package-upload endpoint.
 
 `GET /api/v1/client-releases/recommended` advertises the exact recommended version, compatible version constraint, Python/platform matrix, index URL, hashes, and pinned `uv`/`pipx` commands. Releases within the active compatibility range plus the preceding rollback release remain available. The CLI remains instance-neutral and records the deployment URL through `login --server`.
 

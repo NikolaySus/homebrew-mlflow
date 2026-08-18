@@ -7,6 +7,12 @@ import json
 import re
 from pathlib import Path
 
+REQUIRED_PROJECTS = {
+    "homebrew-mlflow",
+    "homebrew-mlflow-contracts",
+    "homebrew-mlflow-plugins",
+}
+
 
 def normalized_project(filename: str) -> str:
     distribution = filename.split("-")[0]
@@ -17,6 +23,11 @@ def render_index(wheel_dir: Path, output_dir: Path) -> None:
     wheels = sorted(wheel_dir.glob("*.whl"))
     if not wheels:
         raise SystemExit(f"no wheels found in {wheel_dir}")
+    available_projects = {normalized_project(wheel.name) for wheel in wheels}
+    if missing := REQUIRED_PROJECTS - available_projects:
+        raise SystemExit(
+            "wheelhouse is missing required projects: " + ", ".join(sorted(missing))
+        )
 
     projects: dict[str, list[tuple[Path, str]]] = {}
     manifest: dict[str, str] = {}
