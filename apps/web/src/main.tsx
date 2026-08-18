@@ -1118,42 +1118,48 @@ export function App() {
                     title="Hosted repositories"
                     count={repositories.length}
                   />
-                  <div className="grid">
+                  <div className="repositoryList" role="list">
                     {repositories.map((repo) => (
-                      <article key={repo.id}>
-                        <strong>{repo.name}</strong>
-                        <span className={`state ${repo.state}`}>
-                          {repo.state}
-                        </span>
-                        <p>
+                      <article className="repositoryItem" key={repo.id} role="listitem">
+                        <div className="repositoryIdentity">
+                          <div>
+                            <strong>{repo.name}</strong>
+                            <span className={`state ${repo.state}`}>
+                              {repo.state}
+                            </span>
+                          </div>
                           <code>{repo.id}</code>
-                        </p>
-                        {repo.web_url && (
-                          <a href={repo.web_url}>Open in GitLab</a>
-                        )}
-                        <small>{repo.ssh_clone_url}</small>
-                        {repo.failure_code && <small>{repo.failure_code}</small>}
-                        {repo.state === "failed" &&
-                          memberships.some(
-                            (membership) =>
-                              membership.principal_id === me?.principal_id &&
-                              membership.role === "maintainer",
-                          ) && (
+                        </div>
+                        <div className="repositoryLocation">
+                          {repo.web_url && (
+                            <a href={repo.web_url}>Open in GitLab</a>
+                          )}
+                          {repo.ssh_clone_url && <code>{repo.ssh_clone_url}</code>}
+                          {repo.failure_code && <small>{repo.failure_code}</small>}
+                        </div>
+                        <div className="repositoryActions">
+                          {repo.state === "failed" &&
+                            memberships.some(
+                              (membership) =>
+                                membership.principal_id === me?.principal_id &&
+                                membership.role === "maintainer",
+                            ) && (
+                              <button
+                                className="linkButton"
+                                onClick={() => retryProvisioning(repo.id)}
+                              >
+                                retry provisioning
+                              </button>
+                            )}
+                          {(repo.state === "active" || repo.state === "failed") && (
                             <button
                               className="linkButton"
-                              onClick={() => retryProvisioning(repo.id)}
+                              onClick={() => archiveRepository(repo.id)}
                             >
-                              retry provisioning
+                              archive
                             </button>
                           )}
-                        {(repo.state === "active" || repo.state === "failed") && (
-                          <button
-                            className="linkButton"
-                            onClick={() => archiveRepository(repo.id)}
-                          >
-                            archive
-                          </button>
-                        )}
+                        </div>
                       </article>
                     ))}
                   </div>
