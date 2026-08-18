@@ -5,7 +5,12 @@ from functools import lru_cache
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from homebrew_mlflow.application import AccessTokenClaims, DvcCredentialService
+from homebrew_mlflow.application import (
+    AccessTokenClaims,
+    DvcCredentialService,
+    DvcNamespace,
+    RepositoryService,
+)
 from homebrew_mlflow.domain import PublicId, ResourceKind
 from homebrew_mlflow.infrastructure import (
     MinioDvcCredentialIssuer,
@@ -15,7 +20,7 @@ from homebrew_mlflow.infrastructure import (
 )
 from pydantic import BaseModel, ConfigDict, Field
 
-from .security import dvc_claims
+from .security import dvc_claims, platform_claims
 from .settings import get_settings
 
 router = APIRouter(prefix="/api/v1/projects", tags=["dvc-credentials"])
@@ -33,9 +38,46 @@ class AwsCredentialProcessResponse(BaseModel):
 
 @lru_cache
 def credential_issuer(
-    endpoint_url: str, bucket: str, access_key_id: str, secret_access_key: str
+    endpoint_url: str, remote_base_url: str, access_key_id: str, secret_access_key: str
 ) -> MinioDvcCredentialIssuer:
-    return MinioDvcCredentialIssuer(endpoint_url, bucket, access_key_id, secret_access_key)
+    return MinioDvcCredentialIssuer(
+        endpoint_url, remote_base_url, access_key_id, secret_access_key
+    )
+
+
+class DvcConfigurationResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    remote_name: str
+    remote_url: str
+    endpoint_url: str
+    profile: str
+    credential_process: str
+
+
+@router.get("/{project_id}/dvc-configuration", response_model=DvcConfigurationResponse)
+def get_dvc_configuration(
+    project_id: str,
+    claims: Annotated[AccessTokenClaims, Depends(platform_claims)],
+) -> DvcConfigurationResponse:
+    try:
+        parsed_project = PublicId(ResourceKind.PROJECT, project_id)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail="project_not_found") from error
+    settings = get_settings()
+    with create_session(settings.database_url) as session:
+        RepositoryService(SqlAlchemyRepositoryUnitOfWork(session)).list(
+            claims.principal_id, parsed_project
+        )
+    namespace = DvcNamespace.parse(settings.dvc_remote_base_url)
+    profile = f"homebrew-mlflow-{parsed_project}"
+    return DvcConfigurationResponse(
+        remote_name="platform",
+        remote_url=namespace.project_remote_url(parsed_project),
+        endpoint_url=str(settings.s3_public_endpoint_url).rstrip("/"),
+        profile=profile,
+        credential_process=f"homebrew-mlflow credentials dvc --project {parsed_project}",
+    )
 
 
 @router.post("/{project_id}/dvc-credentials", response_model=AwsCredentialProcessResponse)
@@ -60,7 +102,7 @@ def issue_dvc_credentials(
     settings = get_settings()
     issuer = credential_issuer(
         settings.s3_endpoint_url,
-        settings.dvc_bucket,
+        settings.dvc_remote_base_url,
         settings.s3_access_key_id,
         settings.s3_secret_access_key.get_secret_value(),
     )

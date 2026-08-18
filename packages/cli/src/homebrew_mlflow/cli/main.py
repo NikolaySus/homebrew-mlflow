@@ -6,14 +6,17 @@ import re
 import secrets
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import time
 import unicodedata
 import webbrowser
 from pathlib import Path
-from typing import Annotated, cast
+from typing import Annotated, Any, cast
+from urllib.parse import urlsplit
 
+import boto3  # type: ignore[import-untyped]
 import httpx
 import keyring
 import typer
@@ -21,7 +24,13 @@ from packaging.specifiers import SpecifierSet
 from packaging.version import Version
 
 from . import __version__
-from .repository import install_dvc_profile, repository_root
+from .repository import (
+    DvcConfiguration,
+    install_dvc_profile,
+    read_repository_dvc_configuration,
+    reconcile_repository_configuration,
+    repository_root,
+)
 from .runtime import capture_runtime, resolve_runtime
 
 app = typer.Typer(no_args_is_help=True, pretty_exceptions_show_locals=False)
@@ -451,46 +460,243 @@ def project_retry(
 
 @repository_app.command("configure")
 def repository_configure() -> None:
-    """Install this repository's generated DVC credential profile."""
-    profile, path = install_dvc_profile(repository_root())
+    """Reconcile platform-managed DVC settings and install the credential profile."""
+    root = repository_root()
+    repository = _repository_context(root)
+    server = repository["server"].rstrip("/")
+    with httpx.Client(timeout=15) as client:
+        session = _refresh_session(client, server)
+        response = client.get(
+            f"{server}/api/v1/projects/{repository['project_id']}/dvc-configuration",
+            headers=_project_headers(session),
+        )
+        response.raise_for_status()
+    configuration = DvcConfiguration.from_payload(response.json())
+    profile, path, changed = reconcile_repository_configuration(root, configuration)
     typer.echo(f"Configured DVC credential profile {profile} in {path}.")
+    if changed:
+        for changed_path in changed:
+            typer.echo(f"Updated repository file {changed_path.relative_to(root).as_posix()}.")
+        typer.echo("Review and commit the updated repository files before starting a Run.")
+    else:
+        typer.echo("Repository-managed DVC configuration is current.")
+
+
+def _first_line(value: str) -> str:
+    lines = value.strip().splitlines()
+    return lines[0] if lines else ""
+
+
+def _safe_error(error: BaseException) -> str:
+    if isinstance(error, RuntimeError):
+        return str(error).replace("\n", " ")
+    response = getattr(error, "response", None)
+    if isinstance(response, dict):
+        code = response.get("Error", {}).get("Code")
+        if isinstance(code, str):
+            return f"storage_error={code}"
+    return type(error).__name__
+
+
+def _runtime_dvc_version_command(root: Path, kind: str, name: str) -> list[str]:
+    if kind == "uv":
+        if shutil.which("uv") is None:
+            raise RuntimeError("uv is required by the selected environment")
+        return ["uv", "run", "--frozen", "--", "dvc", "--version"]
+    if kind == "pip":
+        candidates = (
+            root / ".venv" / "Scripts" / "dvc.exe",
+            root / ".venv" / "bin" / "dvc",
+        )
+        executable = next((path for path in candidates if path.is_file()), None)
+        if executable is None:
+            raise RuntimeError("DVC is unavailable in the repository .venv")
+        return [str(executable), "--version"]
+    if kind == "conda":
+        return ["conda", "run", "-n", name, "--no-capture-output", "dvc", "--version"]
+    if kind == "system":
+        return ["dvc", "--version"]
+    raise RuntimeError("container environments require an explicit DVC diagnostic command")
+
+
+def _probe_dvc_remote(configuration: DvcConfiguration) -> None:
+    parsed = urlsplit(configuration.remote_url)
+    if parsed.scheme != "s3" or not parsed.netloc or not parsed.path.strip("/"):
+        raise RuntimeError("platform returned an invalid project DVC remote URL")
+    session = boto3.Session(profile_name=configuration.profile)
+    client: Any = session.client(
+        "s3", endpoint_url=configuration.endpoint_url, region_name="us-east-1"
+    )
+    client.list_objects_v2(
+        Bucket=parsed.netloc,
+        Prefix=f"{parsed.path.strip('/')}/",
+        MaxKeys=1,
+    )
+
+
+def _doctor_infisical(
+    report: Any,
+    root: Path,
+    server: str,
+    headers: dict[str, str],
+    project_id: str,
+) -> None:
+    executable = shutil.which("infisical")
+    if executable is None:
+        report("infisical", False, "CLI unavailable")
+        return
+    version = subprocess.run(
+        [executable, "--version"], cwd=root, check=False, capture_output=True, text=True
+    )
+    if version.returncode != 0:
+        report("infisical", False, "version check failed")
+        return
+    try:
+        with httpx.Client(timeout=15) as client:
+            response = client.get(
+                f"{server}/api/v1/projects/{project_id}/secret-context", headers=headers
+            )
+            response.raise_for_status()
+        context = response.json()
+        if context.get("reconciliation_state") != "in_sync":
+            raise RuntimeError("project secret context is not reconciled")
+        access = subprocess.run(
+            [
+                executable,
+                "run",
+                "--projectId",
+                str(context["infisical_project_id"]),
+                "--env",
+                str(context["environment_slug"]),
+                "--path",
+                str(context["secret_path"]),
+                "--",
+                sys.executable,
+                "-c",
+                "pass",
+            ],
+            cwd=root,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if access.returncode != 0:
+            raise RuntimeError("Infisical session or project access check failed")
+        report("infisical", True, _first_line(version.stdout))
+    except (RuntimeError, httpx.HTTPError, KeyError) as error:
+        report("infisical", False, _safe_error(error))
 
 
 @app.command()
 def doctor(
     server: Annotated[str | None, typer.Option("--server")] = None,
 ) -> None:
-    """Check server reachability and CLI compatibility without displaying secrets."""
+    """Check platform and repository readiness without displaying secrets."""
     configured = server or _configured_server()
     if configured is None:
         raise typer.BadParameter("configure a server with login --server first")
+    normalized = configured.rstrip("/")
+    failures: list[str] = []
+
+    def result(name: str, ok: bool, detail: str = "") -> None:
+        suffix = f" {detail}" if detail else ""
+        typer.echo(f"{name}={'ok' if ok else 'failed'}{suffix}")
+        if not ok:
+            failures.append(name)
+
     with httpx.Client(timeout=10) as client:
-        session = _refresh_session(client, configured)
-        response = client.get(
-            f"{configured.rstrip('/')}/api/v1/client-releases/recommended",
+        session = _refresh_session(client, normalized)
+        headers = _project_headers(session)
+        release_response = client.get(
+            f"{normalized}/api/v1/client-releases/recommended",
             headers={
-                "Authorization": f"Bearer {session['access_token']}",
+                **headers,
                 "X-Homebrew-MLflow-Client-Version": __version__,
             },
         )
-        response.raise_for_status()
-    release = response.json()["release"]
+        release_response.raise_for_status()
+        release = release_response.json()["release"]
+        result("platform_session", True)
+
     compatible = Version(__version__) in SpecifierSet(release["compatible_versions"])
-    typer.echo(
-        f"Server reachable; installed={__version__}, "
-        f"recommended={release['recommended_version']}, "
-        f"compatible={release['compatible_versions']}"
+    result(
+        "cli_release",
+        compatible,
+        f"installed={__version__} recommended={release['recommended_version']} "
+        f"compatible={release['compatible_versions']}",
     )
-    if not compatible:
-        typer.echo("Installed CLI version is not compatible with this server.", err=True)
+
+    try:
+        root = repository_root()
+        repository = _repository_context(root)
+    except (RuntimeError, OSError, json.JSONDecodeError) as error:
+        result("repository", False, _safe_error(error))
+        typer.echo("readiness=failed")
+        raise typer.Exit(2) from error
+
+    with httpx.Client(timeout=10) as client:
+        repositories = _project_repositories(
+            client, normalized, headers, repository["project_id"]
+        )
+        mapped = next(
+            (item for item in repositories if item.get("id") == repository["repository_id"]),
+            None,
+        )
+        result(
+            "repository",
+            mapped is not None and mapped.get("state") == "active",
+            f"project={repository['project_id']} repository={repository['repository_id']}",
+        )
+        configuration_response = client.get(
+            f"{normalized}/api/v1/projects/{repository['project_id']}/dvc-configuration",
+            headers=headers,
+        )
+        configuration_response.raise_for_status()
+        canonical = DvcConfiguration.from_payload(configuration_response.json())
+        mlflow_response = client.get(f"{normalized}/mlflow/health")
+        result("mlflow", mlflow_response.is_success, f"status={mlflow_response.status_code}")
+
+    git_check = subprocess.run(
+        ["git", "--version"], check=False, capture_output=True, text=True
+    )
+    result("git", git_check.returncode == 0, _first_line(git_check.stdout))
+
+    try:
+        selection = resolve_runtime(root, ["dvc", "--version"])
+        dvc_command = _runtime_dvc_version_command(root, selection.kind, selection.name)
+        dvc_check = subprocess.run(
+            dvc_command, cwd=root, check=False, capture_output=True, text=True
+        )
+        result("dvc", dvc_check.returncode == 0, _first_line(dvc_check.stdout))
+    except (RuntimeError, OSError) as error:
+        selection = None
+        result("dvc", False, _safe_error(error))
+
+    configuration_matches = False
+    try:
+        local = read_repository_dvc_configuration(root, canonical.remote_name)
+        configuration_matches = local == canonical
+        if not configuration_matches:
+            raise RuntimeError("run `homebrew-mlflow repository configure` to repair configuration")
+        result("dvc_configuration", True, f"remote={canonical.remote_url}")
+    except (RuntimeError, OSError, ValueError) as error:
+        result("dvc_configuration", False, _safe_error(error))
+    if configuration_matches:
+        try:
+            _probe_dvc_remote(canonical)
+            result("dvc_remote", True)
+        except Exception as error:  # credentials and SDK failures are normalized below
+            result("dvc_remote", False, _safe_error(error))
+
+    if selection is not None and selection.secrets_enabled:
+        _doctor_infisical(result, root, normalized, headers, repository["project_id"])
+    else:
+        typer.echo("infisical=skipped secrets-disabled")
+
+    if failures:
+        typer.echo("readiness=failed")
         raise typer.Exit(2)
-    checks = (("git", ["git", "--version"]), ("dvc", ["dvc", "--version"]))
-    for name, command in checks:
-        available = shutil.which(command[0]) is not None
-        if available:
-            result = subprocess.run(command, check=False, capture_output=True, text=True)
-            available = result.returncode == 0
-        typer.echo(f"{name}={'ok' if available else 'unavailable'}")
+    typer.echo("readiness=ok")
 
 
 @app.command()

@@ -415,17 +415,20 @@ uv tool install --default-index https://<platform-domain>/packages/simple/ homeb
 pipx install --index-url https://<platform-domain>/packages/simple/ homebrew-mlflow==<recommended-version>
 
 homebrew-mlflow login
+git clone <repository-url>
+cd <repository>
+homebrew-mlflow repository configure
 homebrew-mlflow doctor
 ```
 
 Native Git and DVC remain visible:
 
 ```bash
-dvc dag
-dvc status
-dvc repro train
-dvc metrics show
-dvc push -r platform
+uv run --frozen dvc dag
+uv run --frozen dvc status
+uv run --frozen dvc repro train
+uv run --frozen dvc metrics show
+uv run --frozen dvc push -r platform
 ```
 
 `dvc push` transfers objects; it does not publish an Artifact Version.
@@ -441,8 +444,8 @@ homebrew-mlflow run \
 Publication:
 
 ```bash
-dvc repro train
-dvc push -r platform
+uv run --frozen dvc repro train
+uv run --frozen dvc push -r platform
 git add dvc.yaml dvc.lock params.yaml
 git commit -m "Train model"
 git push
@@ -661,7 +664,8 @@ Required commands:
 | Command | Required behavior |
 | --- | --- |
 | `homebrew-mlflow login` | GitLab-backed terminal/device login, platform session creation, OS-keyring refresh storage, optional Infisical browser login coordination |
-| `homebrew-mlflow doctor` | Verify platform session, repository/project mapping, MLflow, DVC remote, Infisical CLI/version/session/access; never print secrets |
+| `homebrew-mlflow doctor` | Verify platform session, repository/project mapping, MLflow, the repository-pinned DVC executable and remote, and enabled Infisical CLI/version/session/access; never print secrets or mutate the remote |
+| `homebrew-mlflow repository configure` | Reconcile only platform-managed DVC/AWS configuration and standard local DVC ignores, install the generated AWS profile, and report tracked files that the researcher must review and commit |
 | `homebrew-mlflow run -- ...` | Create/finalize a local Run, supply scoped credentials, optionally wrap with `infisical run` |
 | `homebrew-mlflow logout` | Revoke current platform refresh family and remove local credential; do not silently log out Infisical |
 
@@ -854,6 +858,10 @@ Platform-created repositories include:
 - equivalent `scripts/dvc-publish.sh` and `scripts/dvc-publish.ps1`;
 - brief README instructions for native Git/DVC, helper setup, tracking, and publication;
 - autologging examples configured not to upload model binaries.
+
+Template v3 includes the standard `.dvc/.gitignore`, a project-scoped DVC remote, and uv-mediated
+standalone DVC commands. Existing repositories adopt these platform-managed settings idempotently through
+`homebrew-mlflow repository configure`; the helper never commits the resulting tracked changes.
 
 Publication scripts must:
 

@@ -364,6 +364,16 @@
         }
       }
     },
+    "/api/v1/projects/{project_id}/dvc-configuration": {
+      "get": {
+        "tags": ["dvc-credentials"],
+        "operationId": "get_dvc_configuration_api_v1_projects__project_id__dvc_configuration_get",
+        "parameters": [{"name": "project_id", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "responses": {
+          "200": {"description": "Canonical non-secret DVC configuration", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/DvcConfigurationResponse"}}}}
+        }
+      }
+    },
     "/api/v1/projects/{project_id}/publication-operations": {
       "post": {
         "operationId": "createPublicationOperation", "summary": "Queue immutable DVC publication validation", "security": [{"bearerAuth": []}],
@@ -711,6 +721,15 @@
         "required": ["Version", "AccessKeyId", "SecretAccessKey", "SessionToken", "Expiration"],
         "properties": {
           "Version": {"type": "integer", "const": 1}, "AccessKeyId": {"type": "string"}, "SecretAccessKey": {"type": "string"}, "SessionToken": {"type": "string"}, "Expiration": {"type": "string", "format": "date-time"}
+        }
+      },
+      "DvcConfigurationResponse": {
+        "type": "object", "additionalProperties": false,
+        "required": ["remote_name", "remote_url", "endpoint_url", "profile", "credential_process"],
+        "properties": {
+          "remote_name": {"type": "string"}, "remote_url": {"type": "string"},
+          "endpoint_url": {"type": "string"}, "profile": {"type": "string"},
+          "credential_process": {"type": "string"}
         }
       },
       "CreatePublicationRequest": {

@@ -1259,7 +1259,7 @@ export function App() {
                   <p className="label">Native workflow</p>
                   <pre>
                     homebrew-mlflow doctor{"\n"}homebrew-mlflow run --experiment
-                    &lt;name&gt; -- &lt;command&gt;{"\n"}dvc push -r platform
+                    &lt;name&gt; -- &lt;command&gt;{"\n"}uv run --frozen dvc push -r platform
                     {"\n"}./scripts/dvc-publish.sh …
                   </pre>
                 </section>

@@ -5,6 +5,7 @@ from typing import Protocol
 
 from homebrew_mlflow.domain import PublicId
 
+from .dvc_namespace import DvcNamespace
 from .repositories import (
     GitRepositoryHost,
     HostedRepositoryRequest,
@@ -76,7 +77,7 @@ class ProjectProvisioningCoordinator:
         self._repository_host = repository_host
         self._template = template
         self._platform_url = platform_url.rstrip("/")
-        self._dvc_remote_base_url = dvc_remote_base_url.rstrip("/")
+        self._dvc_namespace = DvcNamespace.parse(dvc_remote_base_url)
         self._s3_endpoint_url = s3_endpoint_url.rstrip("/")
 
     def run_once(self, worker_id: str) -> bool:
@@ -101,7 +102,7 @@ class ProjectProvisioningCoordinator:
                     repository_name=job.repository_name,
                     repository_slug=job.repository_slug,
                     platform_url=self._platform_url,
-                    dvc_remote_url=f"{self._dvc_remote_base_url}/{job.project_id}",
+                    dvc_remote_url=self._dvc_namespace.project_remote_url(job.project_id),
                     s3_endpoint_url=self._s3_endpoint_url,
                 )
             )

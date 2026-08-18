@@ -175,6 +175,20 @@ def test_authenticated_user_claims_installation_once(monkeypatch) -> None:  # ty
         assert stored_repository is not None and stored_repository.state == "active"
         assert stored_repository.provider_id == "9"
 
+    dvc_configuration = client.get(
+        f"/api/v1/projects/{project.json()['id']}/dvc-configuration", headers=headers
+    )
+    assert dvc_configuration.status_code == 200
+    assert dvc_configuration.json() == {
+        "remote_name": "platform",
+        "remote_url": f"s3://research/dvc/{project.json()['id']}",
+        "endpoint_url": "http://localhost:9000",
+        "profile": f"homebrew-mlflow-{project.json()['id']}",
+        "credential_process": (
+            f"homebrew-mlflow credentials dvc --project {project.json()['id']}"
+        ),
+    }
+
     run = client.post(
         f"/api/v1/projects/{project.json()['id']}/runs",
         headers=headers,

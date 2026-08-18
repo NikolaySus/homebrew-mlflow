@@ -21,6 +21,7 @@ from .dvc_credentials import (
     DvcCredentialService,
     TemporaryS3Credential,
 )
+from .dvc_namespace import DvcNamespace
 from .environments import EnvironmentService, EnvironmentUnitOfWork
 from .identity_views import (
     IdentityReadStore,
@@ -139,6 +140,7 @@ __all__ = [
     "DvcCredentialAuthorization",
     "DvcCredentialIssuer",
     "DvcCredentialService",
+    "DvcNamespace",
     "EventHistoryExpired",
     "TemporaryS3Credential",
     "CreateRepository",

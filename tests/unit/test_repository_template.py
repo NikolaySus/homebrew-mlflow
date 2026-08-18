@@ -27,7 +27,9 @@ def test_checked_in_template_renders_all_required_files() -> None:
 
     assert {
         ".aws/config",
+        ".dvc/.gitignore",
         ".dvc/config",
+        ".homebrew-mlflow.json",
         ".gitignore",
         "AGENTS.md",
         "README.md",
@@ -44,6 +46,8 @@ def test_checked_in_template_renders_all_required_files() -> None:
     assert "{{" not in "".join(file.content for file in rendered)
     assert str(template_context.project_id) in by_path["README.md"].content
     assert str(template_context.repository_id) in by_path["README.md"].content
+    assert '"template_version": 3' in by_path[".homebrew-mlflow.json"].content
+    assert "uv run --frozen dvc status" in by_path["README.md"].content
     assert by_path["scripts/dvc-publish.sh"].executable
     assert not by_path["scripts/dvc-publish.ps1"].executable
     assert not by_path["examples/mlflow_autolog.py"].executable

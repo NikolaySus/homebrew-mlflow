@@ -1730,9 +1730,10 @@ wheels = [
 
 [[package]]
 name = "homebrew-mlflow"
-version = "0.2.0"
+version = "0.2.1"
 source = { editable = "packages/cli" }
 dependencies = [
+    { name = "boto3" },
     { name = "homebrew-mlflow-contracts" },
     { name = "httpx" },
     { name = "keyring" },
@@ -1742,6 +1743,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "boto3", specifier = ">=1.42,<2" },
     { name = "homebrew-mlflow-contracts", editable = "packages/contracts" },
     { name = "httpx", specifier = ">=0.27,<1" },
     { name = "keyring", specifier = ">=25,<26" },

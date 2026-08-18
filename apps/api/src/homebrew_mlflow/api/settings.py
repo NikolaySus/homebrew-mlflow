@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     database_url: str = (
         "postgresql+psycopg://homebrew_mlflow:homebrew_mlflow@localhost:5432/homebrew_mlflow"
     )
-    client_recommended_version: str = "0.2.0"
+    client_recommended_version: str = "0.2.1"
     client_compatible_versions: str = ">=0.2,<0.3"
     client_requires_python: str = ">=3.11"
     client_platforms: list[str] = Field(default_factory=lambda: ["linux", "macos", "windows"])
@@ -46,6 +46,7 @@ class Settings(BaseSettings):
     s3_secret_access_key: SecretStr = SecretStr("development-only-password")
     attachment_bucket: str = "homebrew-mlflow"
     dvc_bucket: str = "research"
+    dvc_remote_base_url: str = "s3://research/dvc"
     sse_retention_days: int = Field(default=7, ge=1, le=30)
     publication_max_seconds: int = Field(default=1800, ge=60, le=1800)
     publication_max_bytes: int = Field(default=100 * 1024**3, ge=1, le=100 * 1024**3)
@@ -110,6 +111,10 @@ class Settings(BaseSettings):
             raise ValueError("reconciliation alert threshold must not precede its target")
         if self.attachment_max_run_bytes < self.attachment_max_file_bytes:
             raise ValueError("Run attachment quota must be at least the per-file limit")
+        from homebrew_mlflow.application import DvcNamespace
+
+        if DvcNamespace.parse(self.dvc_remote_base_url).bucket != self.dvc_bucket:
+            raise ValueError("DVC remote base URL bucket must match dvc_bucket")
         return self
 
     @staticmethod

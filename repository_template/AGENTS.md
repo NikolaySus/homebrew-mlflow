@@ -82,8 +82,8 @@ DVC is the source of truth for reproducible data and model outputs. Use the conf
 do not invent object paths or manually calculate hashes.
 
 ```text
-dvc status
-dvc push -r platform
+uv run --frozen dvc status
+uv run --frozen dvc push -r platform
 ```
 
 `dvc push` transfers objects only. It does **not** publish or archive an experiment. Do not run remote cache

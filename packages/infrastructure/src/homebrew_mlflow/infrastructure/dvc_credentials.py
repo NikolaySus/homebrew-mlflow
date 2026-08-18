@@ -6,7 +6,7 @@ from typing import Any
 
 import boto3  # type: ignore[import-untyped]
 from botocore.exceptions import ClientError  # type: ignore[import-untyped]
-from homebrew_mlflow.application import TemporaryS3Credential
+from homebrew_mlflow.application import DvcNamespace, TemporaryS3Credential
 from homebrew_mlflow.domain import PublicId
 
 
@@ -14,12 +14,13 @@ class MinioDvcCredentialIssuer:
     def __init__(
         self,
         endpoint_url: str,
-        bucket: str,
+        remote_base_url: str,
         access_key_id: str,
         secret_access_key: str,
     ) -> None:
         self._endpoint_url = endpoint_url
-        self._bucket = bucket
+        self._namespace = DvcNamespace.parse(remote_base_url)
+        self._bucket = self._namespace.bucket
         self._access_key_id = access_key_id
         self._secret_access_key = secret_access_key
         s3: Any = boto3.client(
@@ -30,16 +31,16 @@ class MinioDvcCredentialIssuer:
             region_name="us-east-1",
         )
         try:
-            s3.head_bucket(Bucket=bucket)
+            s3.head_bucket(Bucket=self._bucket)
         except ClientError as error:
             if error.response.get("ResponseMetadata", {}).get("HTTPStatusCode") != 404:
                 raise
-            s3.create_bucket(Bucket=bucket)
+            s3.create_bucket(Bucket=self._bucket)
 
     def issue(
         self, project_id: PublicId, read_only_object_keys: tuple[str, ...]
     ) -> TemporaryS3Credential:
-        prefix = f"dvc/{project_id}"
+        prefix = self._namespace.project_prefix(project_id)
         list_prefixes = [prefix, f"{prefix}/*", *read_only_object_keys]
         policy: dict[str, Any] = {
             "Version": "2012-10-17",
