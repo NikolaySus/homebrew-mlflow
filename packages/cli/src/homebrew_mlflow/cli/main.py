@@ -21,7 +21,6 @@ import boto3  # type: ignore[import-untyped]
 import httpx
 import keyring
 import typer
-import yaml
 from packaging.specifiers import SpecifierSet
 from packaging.version import Version
 
@@ -144,23 +143,29 @@ def _git_blob_evidence(root: Path, revision: str, path: str) -> dict[str, object
         "sha256": hashlib.sha256(result.stdout).hexdigest(),
     }
     if path == "dvc.lock":
-        try:
-            document = yaml.safe_load(result.stdout)
-        except yaml.YAMLError:
-            document = None
-        stages = document.get("stages") if isinstance(document, dict) else None
-        candidates: set[str] = set()
-        if isinstance(stages, dict):
-            for stage in stages.values():
-                outputs = stage.get("outs") if isinstance(stage, dict) else None
-                if not isinstance(outputs, list):
-                    continue
-                for output in outputs:
-                    candidate = output.get("path") if isinstance(output, dict) else None
-                    if isinstance(candidate, str):
-                        candidates.add(candidate)
-        evidence["candidate_output_paths"] = sorted(candidates)
+        evidence["candidate_output_paths"] = _dvc_lock_output_paths(result.stdout)
     return evidence
+
+
+def _dvc_lock_output_paths(content: bytes) -> list[str]:
+    candidates: set[str] = set()
+    outputs_indent: int | None = None
+    for line in content.decode("utf-8", errors="replace").splitlines():
+        stripped = line.lstrip()
+        indent = len(line) - len(stripped)
+        if stripped == "outs:":
+            outputs_indent = indent
+            continue
+        if outputs_indent is None:
+            continue
+        match = re.fullmatch(r"-\s+path:\s*(.+)", stripped)
+        if match is not None and indent >= outputs_indent:
+            candidates.add(match.group(1).strip().strip("'\""))
+            continue
+        if stripped and indent <= outputs_indent:
+            outputs_indent = None
+            continue
+    return sorted(candidates)
 
 
 def _resolve_environment(

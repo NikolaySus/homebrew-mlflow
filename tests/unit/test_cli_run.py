@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from homebrew_mlflow.cli.main import _changed_dvc_experiment, app
+from homebrew_mlflow.cli.main import _changed_dvc_experiment, _dvc_lock_output_paths, app
 from homebrew_mlflow.cli.runtime import RuntimeCapture, RuntimeSelection
 from typer.testing import CliRunner
 
@@ -163,3 +163,25 @@ def test_changed_dvc_experiment_resolves_one_descendant(monkeypatch, tmp_path: P
     assert resolved == revision
     assert refs == ["refs/exps/base/new"]
     assert problems == []
+
+
+def test_dvc_lock_output_paths_are_captured_without_trusting_hashes() -> None:
+    content = b"""schema: '2.0'
+stages:
+  train:
+    cmd: python train.py
+    outs:
+    - path: models/model.bin
+      hash: md5
+      md5: secret-not-authoritative
+    metrics:
+    - path: metrics.json
+  evaluate:
+    outs:
+    - path: reports/results.csv
+"""
+
+    assert _dvc_lock_output_paths(content) == [
+        "models/model.bin",
+        "reports/results.csv",
+    ]
