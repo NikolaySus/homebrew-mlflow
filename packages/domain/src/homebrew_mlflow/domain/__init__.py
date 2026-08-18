@@ -37,7 +37,14 @@ from .repositories import (
     InvalidRepositoryTransition,
     RepositoryState,
 )
-from .runs import Experiment, InvalidRunTransition, Run, RunState, transition_run
+from .runs import (
+    Experiment,
+    InvalidRunTransition,
+    Run,
+    RunProvenanceStatus,
+    RunState,
+    transition_run,
+)
 from .secrets import SecretContext
 from .sharing import ArtifactDerivation, ArtifactSharingGrant, SharedArtifactReference
 from .tracking import RunMetric, RunParameter, RunTag
@@ -79,6 +86,7 @@ __all__ = [
     "ResearchProject",
     "RepositoryState",
     "RunState",
+    "RunProvenanceStatus",
     "Run",
     "RunAttachment",
     "RunMetric",

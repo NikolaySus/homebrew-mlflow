@@ -41,6 +41,8 @@ type Run = {
   environment_specification_id: string | null;
   command: string[];
   ended_at: string | null;
+  provenance_status: "pending" | "complete" | "incomplete" | "invalid";
+  dvc_experiment_revision: string | null;
 };
 type Metric = {
   key: string;
@@ -53,6 +55,8 @@ type RunDetail = {
   created_at: string;
   started_at: string | null;
   git_commit_sha: string | null;
+  provenance_status: "pending" | "complete" | "incomplete" | "invalid";
+  dvc_experiment_revision: string | null;
   finalization_evidence: Record<string, unknown> | null;
   input_artifact_version_ids: string[];
   output_artifact_version_ids: string[];
@@ -1600,9 +1604,18 @@ function RunInspector({ detail }: { detail: RunDetail }) {
         <strong>Command</strong> {detail.run.command.join(" ")}
       </p>
       <p>
-        <strong>Commit</strong>{" "}
+        <strong>Source commit</strong>{" "}
         <code>{detail.git_commit_sha ?? "not finalized"}</code>
       </p>
+      <p>
+        <strong>Provenance</strong> {detail.provenance_status}
+      </p>
+      {detail.dvc_experiment_revision && (
+        <p>
+          <strong>DVC experiment</strong>{" "}
+          <code>{detail.dvc_experiment_revision}</code>
+        </p>
+      )}
       <p>
         <strong>Inputs</strong>{" "}
         {detail.input_artifact_version_ids.join(", ") || "none"}

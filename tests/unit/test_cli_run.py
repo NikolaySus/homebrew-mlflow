@@ -5,7 +5,8 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from homebrew_mlflow.cli.main import app
+import pytest
+from homebrew_mlflow.cli.main import _changed_dvc_experiment, app
 from homebrew_mlflow.cli.runtime import RuntimeCapture, RuntimeSelection
 from typer.testing import CliRunner
 
@@ -53,7 +54,20 @@ class Client:
         raise AssertionError(url)
 
 
-def test_run_executes_child_locally_and_finalizes(monkeypatch, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
+@pytest.mark.parametrize(
+    ("experiment_refs_after", "expected_provenance", "expected_revision"),
+    [
+        ({"refs/exps/base/baseline": "b" * 40}, "complete", "b" * 40),
+        ({}, "incomplete", None),
+    ],
+)
+def test_run_preserves_child_success_with_workspace_changes(  # type: ignore[no-untyped-def]
+    monkeypatch,
+    tmp_path: Path,
+    experiment_refs_after: dict[str, str],
+    expected_provenance: str,
+    expected_revision: str | None,
+) -> None:
     context = {
         "server": "https://ml.example",
         "project_id": "pr_01K00000000000000000000000",
@@ -77,6 +91,21 @@ def test_run_executes_child_locally_and_finalizes(monkeypatch, tmp_path: Path) -
     monkeypatch.setattr(
         "homebrew_mlflow.cli.main._committed_upstream_state", lambda _root: "a" * 40
     )
+    ref_snapshots = iter(({}, experiment_refs_after))
+    monkeypatch.setattr(
+        "homebrew_mlflow.cli.main._dvc_experiment_refs", lambda _root: next(ref_snapshots)
+    )
+    monkeypatch.setattr(
+        "homebrew_mlflow.cli.main._git_output",
+        lambda *arguments, **_kwargs: (
+            "a" * 40
+            if arguments[:2] in {("rev-parse", "HEAD"), ("merge-base", "a" * 40)}
+            else " M dvc.lock"
+            if arguments[:2] == ("status", "--porcelain")
+            else ""
+        ),
+    )
+    monkeypatch.setattr("homebrew_mlflow.cli.main._git_blob_evidence", lambda *_args: None)
     executed: list[list[str]] = []
 
     def fake_run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
@@ -109,3 +138,28 @@ def test_run_executes_child_locally_and_finalizes(monkeypatch, tmp_path: Path) -
     assert create[1]["json"]["environment_specification_id"].startswith("env_")
     assert Client.requests[-1][0].endswith("/finalize")
     assert Client.requests[-1][1]["json"]["git_commit_sha"] == "a" * 40
+    assert Client.requests[-1][1]["json"]["provenance_status"] == expected_provenance
+    assert Client.requests[-1][1]["json"]["dvc_experiment_revision"] == expected_revision
+
+
+def test_changed_dvc_experiment_resolves_one_descendant(monkeypatch, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
+    base = "a" * 40
+    revision = "b" * 40
+    monkeypatch.setattr(
+        "homebrew_mlflow.cli.main._git_output",
+        lambda *arguments, **_kwargs: base if arguments[0] == "merge-base" else "",
+    )
+
+    resolved, refs, problems = _changed_dvc_experiment(
+        tmp_path,
+        base,
+        {"refs/exps/base/existing": "c" * 40},
+        {
+            "refs/exps/base/existing": "c" * 40,
+            "refs/exps/base/new": revision,
+        },
+    )
+
+    assert resolved == revision
+    assert refs == ["refs/exps/base/new"]
+    assert problems == []

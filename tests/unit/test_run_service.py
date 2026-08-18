@@ -15,6 +15,7 @@ from homebrew_mlflow.domain import (
     PublicId,
     ResourceKind,
     Run,
+    RunProvenanceStatus,
     RunState,
 )
 
@@ -125,12 +126,16 @@ def test_finalization_is_idempotent_only_for_identical_evidence() -> None:
         "a" * 40,
         {"dvc": {"revision": "exp-1"}},
         now,
+        provenance_status=RunProvenanceStatus.COMPLETE,
+        dvc_experiment_revision="b" * 40,
     )
 
     first = service.finalize(actor, command)
     replay = service.finalize(actor, command)
 
     assert replay == first
+    assert first.provenance_status is RunProvenanceStatus.COMPLETE
+    assert first.dvc_experiment_revision == "b" * 40
     with pytest.raises(ResourceConflict):
         service.finalize(
             actor,

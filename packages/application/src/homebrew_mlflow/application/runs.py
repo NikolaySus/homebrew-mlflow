@@ -14,6 +14,7 @@ from homebrew_mlflow.domain import (
     PublicId,
     ResourceKind,
     Run,
+    RunProvenanceStatus,
     RunState,
     permits,
 )
@@ -95,6 +96,9 @@ class FinalizeRun:
     occurred_at: datetime
     pipeline_version_id: PublicId | None = None
     environment_specification_id: PublicId | None = None
+    provenance_status: RunProvenanceStatus = RunProvenanceStatus.COMPLETE
+    dvc_experiment_revision: str | None = None
+    provenance_explicit: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -178,22 +182,28 @@ class RunService:
         )
         if not valid_environment:
             raise ValueError("Environment Specification is not active in the selected project")
+        digest_document = {
+            "exit_code": command.exit_code,
+            "status": command.status.value,
+            "git_commit_sha": command.git_commit_sha,
+            "evidence": command.evidence,
+            "pipeline_version_id": str(command.pipeline_version_id)
+            if command.pipeline_version_id
+            else None,
+            "environment_specification_id": str(command.environment_specification_id)
+            if command.environment_specification_id
+            else None,
+        }
+        if command.provenance_explicit:
+            digest_document.update(
+                {
+                    "provenance_status": command.provenance_status.value,
+                    "dvc_experiment_revision": command.dvc_experiment_revision,
+                }
+            )
         digest = hashlib.sha256(
             json.dumps(
-                {
-                    "exit_code": command.exit_code,
-                    "status": command.status.value,
-                    "git_commit_sha": command.git_commit_sha,
-                    "evidence": command.evidence,
-                    "pipeline_version_id": str(command.pipeline_version_id)
-                    if command.pipeline_version_id
-                    else None,
-                    "environment_specification_id": str(
-                        command.environment_specification_id
-                    )
-                    if command.environment_specification_id
-                    else None,
-                },
+                digest_document,
                 ensure_ascii=False,
                 separators=(",", ":"),
                 sort_keys=True,
@@ -213,6 +223,8 @@ class RunService:
             exit_code=command.exit_code,
             finalization_digest=digest,
             git_commit_sha=command.git_commit_sha,
+            provenance_status=command.provenance_status,
+            dvc_experiment_revision=command.dvc_experiment_revision,
             evidence=command.evidence,
             pipeline_version_id=command.pipeline_version_id,
             environment_specification_id=command.environment_specification_id,

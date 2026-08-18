@@ -17,7 +17,8 @@ it is not a remote execution service.
 
 1. Read this file, `README.md`, `dvc.yaml`, `params.yaml` or equivalent configuration, and any nested
    `AGENTS.md` that applies to files you will touch.
-2. Inspect `git status`, the current branch, recent commits, `dvc status`, and `dvc dag` before changing
+2. Inspect `git status`, the current branch, recent commits, `uv run --frozen dvc status`, and
+   `uv run --frozen dvc dag` before changing
    anything. Do not overwrite work you did not create.
 3. State the hypothesis, baseline, primary metric, success criterion, intended experiment command, and
    expected compute/data cost. If the expert already supplied these, restate them briefly rather than ask
@@ -59,6 +60,9 @@ lockfiles. Prefer a named DVC experiment during exploration:
 homebrew-mlflow doctor
 homebrew-mlflow run --experiment <name> -- dvc exp run -n <name>
 ```
+
+The Run helper executes the child through the declared uv environment; do not add a nested `uv run`
+inside `homebrew-mlflow run`.
 
 If the repository uses another declared training command, keep the outer `homebrew-mlflow run` wrapper so
 the Run captures command, Git state, DVC state, parameters, metrics, and environment metadata.

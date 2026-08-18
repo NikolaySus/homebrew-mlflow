@@ -18,6 +18,13 @@ class RunState(StrEnum):
     INCOMPLETE = "incomplete"
 
 
+class RunProvenanceStatus(StrEnum):
+    PENDING = "pending"
+    COMPLETE = "complete"
+    INCOMPLETE = "incomplete"
+    INVALID = "invalid"
+
+
 _TRANSITIONS: dict[RunState, frozenset[RunState]] = {
     RunState.CREATED: frozenset({RunState.RUNNING, RunState.INCOMPLETE}),
     RunState.RUNNING: frozenset({RunState.FINALIZING, RunState.INCOMPLETE}),
@@ -75,6 +82,8 @@ class Run:
     exit_code: int | None = None
     finalization_digest: str | None = None
     git_commit_sha: str | None = None
+    provenance_status: RunProvenanceStatus = RunProvenanceStatus.PENDING
+    dvc_experiment_revision: str | None = None
     retry_of_run_id: PublicId | None = None
     finalization_evidence: dict[str, Any] | None = None
     pipeline_version_id: PublicId | None = None
@@ -160,11 +169,21 @@ class Run:
         finalization_digest: str,
         git_commit_sha: str | None,
         evidence: dict[str, Any],
+        provenance_status: RunProvenanceStatus = RunProvenanceStatus.COMPLETE,
+        dvc_experiment_revision: str | None = None,
         pipeline_version_id: PublicId | None = None,
         environment_specification_id: PublicId | None = None,
     ) -> Run:
         if target not in {RunState.SUCCEEDED, RunState.FAILED, RunState.INTERRUPTED}:
             raise InvalidRunTransition("Run finalization requires a completed terminal state")
+        if provenance_status is RunProvenanceStatus.PENDING:
+            raise ValueError("finalized Run provenance cannot remain pending")
+        if dvc_experiment_revision is not None and (
+            provenance_status is not RunProvenanceStatus.COMPLETE
+            or len(dvc_experiment_revision) != 40
+            or any(character not in "0123456789abcdef" for character in dvc_experiment_revision)
+        ):
+            raise ValueError("invalid DVC experiment provenance")
         return replace(
             self,
             state=transition_run(self.state, target),
@@ -172,6 +191,8 @@ class Run:
             exit_code=exit_code,
             finalization_digest=finalization_digest,
             git_commit_sha=git_commit_sha,
+            provenance_status=provenance_status,
+            dvc_experiment_revision=dvc_experiment_revision,
             finalization_evidence=evidence,
             pipeline_version_id=pipeline_version_id or self.pipeline_version_id,
             environment_specification_id=(

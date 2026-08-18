@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -20,6 +21,7 @@ import boto3  # type: ignore[import-untyped]
 import httpx
 import keyring
 import typer
+import yaml
 from packaging.specifiers import SpecifierSet
 from packaging.version import Version
 
@@ -27,6 +29,7 @@ from . import __version__
 from .repository import (
     DvcConfiguration,
     install_dvc_profile,
+    prepare_repository_template_upgrade,
     read_repository_dvc_configuration,
     reconcile_repository_configuration,
     repository_root,
@@ -91,6 +94,73 @@ def _committed_upstream_state(root: Path) -> str:
     if _git_output("rev-list", "--count", f"{upstream}..HEAD", root=root) != "0":
         raise RuntimeError("current commit has not been pushed to its upstream branch")
     return commit
+
+
+def _dvc_experiment_refs(root: Path) -> dict[str, str]:
+    refs: dict[str, str] = {}
+    output = _git_output(
+        "for-each-ref",
+        "refs/exps",
+        "--format=%(refname) %(objectname)",
+        root=root,
+    )
+    for line in output.splitlines():
+        ref, separator, revision = line.partition(" ")
+        if separator and not ref.startswith("refs/exps/exec/"):
+            refs[ref] = revision
+    return refs
+
+
+def _changed_dvc_experiment(
+    root: Path,
+    base_commit: str,
+    before: dict[str, str],
+    after: dict[str, str],
+) -> tuple[str | None, list[str], list[str]]:
+    changed = sorted(ref for ref, revision in after.items() if before.get(ref) != revision)
+    revisions = sorted({after[ref] for ref in changed})
+    if not revisions:
+        return None, changed, []
+    if len(revisions) != 1:
+        return None, changed, ["ambiguous_dvc_experiments"]
+    revision = revisions[0]
+    merge_base = _git_output("merge-base", base_commit, revision, root=root)
+    if len(revision) != 40 or merge_base != base_commit:
+        return None, changed, ["invalid_dvc_experiment_ancestry"]
+    return revision, changed, []
+
+
+def _git_blob_evidence(root: Path, revision: str, path: str) -> dict[str, object] | None:
+    result = subprocess.run(
+        ["git", "show", f"{revision}:{path}"],
+        cwd=root,
+        check=False,
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        return None
+    evidence: dict[str, object] = {
+        "path": path,
+        "sha256": hashlib.sha256(result.stdout).hexdigest(),
+    }
+    if path == "dvc.lock":
+        try:
+            document = yaml.safe_load(result.stdout)
+        except yaml.YAMLError:
+            document = None
+        stages = document.get("stages") if isinstance(document, dict) else None
+        candidates: set[str] = set()
+        if isinstance(stages, dict):
+            for stage in stages.values():
+                outputs = stage.get("outs") if isinstance(stage, dict) else None
+                if not isinstance(outputs, list):
+                    continue
+                for output in outputs:
+                    candidate = output.get("path") if isinstance(output, dict) else None
+                    if isinstance(candidate, str):
+                        candidates.add(candidate)
+        evidence["candidate_output_paths"] = sorted(candidates)
+    return evidence
 
 
 def _resolve_environment(
@@ -460,8 +530,9 @@ def project_retry(
 
 @repository_app.command("configure")
 def repository_configure() -> None:
-    """Reconcile platform-managed DVC settings and install the credential profile."""
+    """Reconcile managed settings and safely upgrade repository instructions."""
     root = repository_root()
+    template_upgrade = prepare_repository_template_upgrade(root)
     repository = _repository_context(root)
     server = repository["server"].rstrip("/")
     with httpx.Client(timeout=15) as client:
@@ -473,6 +544,8 @@ def repository_configure() -> None:
         response.raise_for_status()
     configuration = DvcConfiguration.from_payload(response.json())
     profile, path, changed = reconcile_repository_configuration(root, configuration)
+    template_changed = template_upgrade.apply()
+    changed = (*changed, *template_changed)
     typer.echo(f"Configured DVC credential profile {profile} in {path}.")
     if changed:
         for changed_path in changed:
@@ -962,6 +1035,7 @@ def run(
     if selection.secrets_enabled and shutil.which("infisical") is None:
         raise RuntimeError("Infisical CLI is required for this Run")
     commit_sha = _committed_upstream_state(root)
+    experiment_refs_before = _dvc_experiment_refs(root)
     secret_context: dict[str, str] | None = None
     with httpx.Client(timeout=15) as client:
         session = _refresh_session(client, server)
@@ -1096,25 +1170,50 @@ def run(
         heartbeat_thread.join(timeout=5)
         token_path.unlink(missing_ok=True)
 
-    provenance_error: str | None = None
+    provenance_problems: list[str] = []
+    provenance_status = "complete"
+    dvc_experiment_revision: str | None = None
+    changed_experiment_refs: list[str] = []
     pipeline_version_id: str | None = None
+    captured_after = None
+    final_commit = ""
     try:
-        final_commit = _committed_upstream_state(root)
+        final_commit = _git_output("rev-parse", "HEAD", root=root)
         if final_commit != commit_sha:
-            raise RuntimeError("repository commit changed while the Run was executing")
+            provenance_problems.append("head_changed")
         captured_after = capture_runtime(root, command, selection)
         if captured_after.fingerprint != captured_before.fingerprint:
-            raise RuntimeError("environment_drift")
+            provenance_problems.append("environment_drift")
     except RuntimeError as error:
-        provenance_error = str(error)
-        captured_after = None
-        if exit_code == 0:
-            exit_code = 1
+        provenance_problems.append(str(error))
+
+    try:
+        experiment_refs_after = _dvc_experiment_refs(root)
+        (
+            dvc_experiment_revision,
+            changed_experiment_refs,
+            experiment_problems,
+        ) = _changed_dvc_experiment(
+            root, commit_sha, experiment_refs_before, experiment_refs_after
+        )
+        provenance_problems.extend(experiment_problems)
+    except RuntimeError as error:
+        provenance_problems.append(str(error))
+
+    try:
+        workspace_status = _git_output("status", "--porcelain", root=root).splitlines()
+    except RuntimeError as error:
+        workspace_status = []
+        provenance_problems.append(str(error))
+    if provenance_problems:
+        provenance_status = "invalid"
+    elif dvc_experiment_revision is None and workspace_status:
+        provenance_status = "incomplete"
     status_value = "interrupted" if interrupted else ("succeeded" if exit_code == 0 else "failed")
     with httpx.Client(timeout=15) as client:
         final_session = _refresh_session(client, server)
         final_headers = _project_headers(final_session)
-        if provenance_error is None and (root / "dvc.yaml").is_file():
+        if final_commit == commit_sha and (root / "dvc.yaml").is_file():
             pipeline_response = client.put(
                 f"{server}/api/v1/projects/{repository['project_id']}/pipeline-versions/resolve",
                 headers=final_headers,
@@ -1136,6 +1235,8 @@ def run(
                 "exit_code": exit_code,
                 "status": status_value,
                 "git_commit_sha": commit_sha,
+                "provenance_status": provenance_status,
+                "dvc_experiment_revision": dvc_experiment_revision,
                 "pipeline_version_id": pipeline_version_id,
                 "environment_specification_id": environment_id,
                 "evidence": {
@@ -1151,12 +1252,32 @@ def run(
                             captured_after.fingerprint if captured_after is not None else None
                         ),
                     },
-                    "provenance_error": provenance_error,
+                    "provenance_error": provenance_problems[0] if provenance_problems else None,
+                    "provenance": {
+                        "schema": 1,
+                        "status": provenance_status,
+                        "base_git_commit_sha": commit_sha,
+                        "dvc_experiment_revision": dvc_experiment_revision,
+                        "changed_experiment_refs": changed_experiment_refs,
+                        "workspace_changes": workspace_status[:200],
+                        "dvc_metadata": (
+                            _git_blob_evidence(root, dvc_experiment_revision, "dvc.lock")
+                            if dvc_experiment_revision is not None
+                            else None
+                        ),
+                        "problems": provenance_problems,
+                    },
                 },
             },
         )
         finalized.raise_for_status()
     typer.echo(f"Run {run_id} finalized as {status_value}.")
+    if provenance_status != "complete":
+        typer.echo(
+            f"Warning: Run provenance is {provenance_status}; "
+            "it cannot be used for archival publication.",
+            err=True,
+        )
     if exit_code:
         raise typer.Exit(exit_code)
 

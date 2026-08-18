@@ -59,6 +59,7 @@ from homebrew_mlflow.domain import (
     RunAttachment,
     RunMetric,
     RunParameter,
+    RunProvenanceStatus,
     RunState,
     RunTag,
     SecretContext,
@@ -283,6 +284,8 @@ class RunRow(Base):
     exit_code: Mapped[int | None]
     finalization_digest: Mapped[str | None] = mapped_column(String(64))
     git_commit_sha: Mapped[str | None] = mapped_column(String(64))
+    provenance_status: Mapped[str] = mapped_column(String(24), default="pending")
+    dvc_experiment_revision: Mapped[str | None] = mapped_column(String(40))
     finalization_evidence: Mapped[dict[str, Any] | None] = mapped_column(JSON)
 
 
@@ -2127,6 +2130,8 @@ class SqlAlchemyRunUnitOfWork:
                 exit_code=run.exit_code,
                 finalization_digest=run.finalization_digest,
                 git_commit_sha=run.git_commit_sha,
+                provenance_status=run.provenance_status.value,
+                dvc_experiment_revision=run.dvc_experiment_revision,
                 finalization_evidence=run.finalization_evidence,
             )
         )
@@ -2192,6 +2197,8 @@ class SqlAlchemyRunUnitOfWork:
             row.exit_code,
             row.finalization_digest,
             row.git_commit_sha,
+            RunProvenanceStatus(row.provenance_status),
+            row.dvc_experiment_revision,
             PublicId(ResourceKind.RUN, retry_public_id) if retry_public_id else None,
             row.finalization_evidence,
             PublicId(ResourceKind.PIPELINE_VERSION, pipeline_version_public_id)
@@ -2213,6 +2220,8 @@ class SqlAlchemyRunUnitOfWork:
         row.exit_code = run.exit_code
         row.finalization_digest = run.finalization_digest
         row.git_commit_sha = run.git_commit_sha
+        row.provenance_status = run.provenance_status.value
+        row.dvc_experiment_revision = run.dvc_experiment_revision
         row.finalization_evidence = run.finalization_evidence
         row.pipeline_version_id = (
             self._key(PipelineVersionRow, run.pipeline_version_id)

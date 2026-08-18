@@ -12,7 +12,15 @@ from homebrew_mlflow.application import (
     TokenAudience,
     TrackingService,
 )
-from homebrew_mlflow.domain import Experiment, MachineScope, PublicId, ResourceKind, Run, RunState
+from homebrew_mlflow.domain import (
+    Experiment,
+    MachineScope,
+    PublicId,
+    ResourceKind,
+    Run,
+    RunProvenanceStatus,
+    RunState,
+)
 from homebrew_mlflow.infrastructure import (
     SqlAlchemyRunUnitOfWork,
     SqlAlchemyTrackingUnitOfWork,
@@ -44,6 +52,8 @@ class FinalizeRunRequest(BaseModel):
     exit_code: int
     status: Literal["succeeded", "failed", "interrupted"]
     git_commit_sha: str | None = Field(default=None, pattern="^[0-9a-f]{40,64}$")
+    provenance_status: Literal["complete", "incomplete", "invalid"] | None = None
+    dvc_experiment_revision: str | None = Field(default=None, pattern="^[0-9a-f]{40}$")
     evidence: dict[str, Any] = Field(default_factory=dict)
     pipeline_version_id: str | None = None
     environment_specification_id: str | None = None
@@ -63,6 +73,8 @@ class RunResponse(BaseModel):
     heartbeat_at: datetime | None
     ended_at: datetime | None
     exit_code: int | None
+    provenance_status: Literal["pending", "complete", "incomplete", "invalid"]
+    dvc_experiment_revision: str | None
     logging_token: str | None = None
 
 
@@ -83,6 +95,8 @@ class RunDetailResponse(BaseModel):
     created_at: datetime
     started_at: datetime | None
     git_commit_sha: str | None
+    provenance_status: Literal["pending", "complete", "incomplete", "invalid"]
+    dvc_experiment_revision: str | None
     finalization_evidence: dict[str, Any] | None
     input_artifact_version_ids: list[str]
     output_artifact_version_ids: list[str]
@@ -110,6 +124,8 @@ def _response(run: Run, *, logging_token: str | None = None) -> RunResponse:
         heartbeat_at=run.heartbeat_at,
         ended_at=run.ended_at,
         exit_code=run.exit_code,
+        provenance_status=run.provenance_status.value,
+        dvc_experiment_revision=run.dvc_experiment_revision,
         logging_token=logging_token,
     )
 
@@ -267,6 +283,8 @@ def get_run(
         created_at=run.created_at,
         started_at=run.started_at,
         git_commit_sha=run.git_commit_sha,
+        provenance_status=run.provenance_status.value,
+        dvc_experiment_revision=run.dvc_experiment_revision,
         finalization_evidence=run.finalization_evidence,
         input_artifact_version_ids=[str(value) for value in provenance.input_artifact_version_ids],
         output_artifact_version_ids=[
@@ -322,6 +340,11 @@ def finalize(
     body: FinalizeRunRequest,
     claims: Annotated[AccessTokenClaims, Depends(platform_claims)],
 ) -> RunResponse:
+    inferred_provenance = (
+        RunProvenanceStatus.COMPLETE
+        if body.git_commit_sha is not None and not body.evidence.get("provenance_error")
+        else RunProvenanceStatus.INVALID
+    )
     try:
         parsed_run = PublicId(ResourceKind.RUN, run_id)
         pipeline_version = (
@@ -352,6 +375,11 @@ def finalize(
                     datetime.now(UTC),
                     pipeline_version,
                     environment,
+                    RunProvenanceStatus(body.provenance_status)
+                    if body.provenance_status is not None
+                    else inferred_provenance,
+                    body.dvc_experiment_revision,
+                    body.provenance_status is not None,
                 ),
             )
         except ValueError as error:

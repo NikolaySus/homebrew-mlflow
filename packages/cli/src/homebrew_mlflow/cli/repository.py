@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import configparser
+import json
 import os
 import tempfile
 from dataclasses import dataclass
@@ -28,6 +29,142 @@ class DvcConfiguration:
         if not all(isinstance(payload.get(key), str) and payload[key] for key in required):
             raise RuntimeError("platform returned an invalid DVC configuration")
         return cls(*(str(payload[key]) for key in required))
+
+
+@dataclass(frozen=True, slots=True)
+class RepositoryTemplateUpgrade:
+    root: Path
+    source_version: int
+    target_version: int
+    content_by_path: dict[Path, str]
+
+    def apply(self) -> tuple[Path, ...]:
+        changed: list[Path] = []
+        for path, content in self.content_by_path.items():
+            if path.is_file() and path.read_text(encoding="utf-8") == content:
+                continue
+            _write_atomic(path, content)
+            changed.append(path)
+        return tuple(changed)
+
+
+_LATEST_TEMPLATE_VERSION = 4
+
+
+def prepare_repository_template_upgrade(root: Path) -> RepositoryTemplateUpgrade:
+    sentinel_path = root / ".homebrew-mlflow.json"
+    try:
+        sentinel = json.loads(sentinel_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeError("invalid .homebrew-mlflow.json repository context") from error
+    version = sentinel.get("template_version")
+    if not isinstance(version, int) or isinstance(version, bool):
+        raise RuntimeError("repository template version is missing or invalid")
+    if version > _LATEST_TEMPLATE_VERSION:
+        raise RuntimeError(
+            "repository template is newer than this CLI; update homebrew-mlflow first"
+        )
+    if version < 2:
+        raise RuntimeError(f"unsupported repository template version: {version}")
+
+    content_by_path: dict[Path, str] = {}
+    current = version
+    while current < _LATEST_TEMPLATE_VERSION:
+        if current == 2:
+            _prepare_v2_to_v3(root, content_by_path)
+        elif current == 3:
+            _prepare_v3_to_v4(root, content_by_path)
+        current += 1
+    sentinel["template_version"] = current
+    content_by_path[sentinel_path] = json.dumps(sentinel, indent=2, ensure_ascii=False) + "\n"
+    return RepositoryTemplateUpgrade(root, version, current, content_by_path)
+
+
+def _pending_content(root: Path, changes: dict[Path, str], relative: str) -> tuple[Path, str]:
+    path = root / relative
+    if path in changes:
+        return path, changes[path]
+    try:
+        return path, path.read_text(encoding="utf-8")
+    except OSError as error:
+        raise RuntimeError(f"repository template migration requires {relative}") from error
+
+
+def _replace_managed_fragment(content: str, old: str, new: str, relative: str) -> str:
+    if new in content:
+        return content
+    if old not in content:
+        raise RuntimeError(
+            f"repository template migration conflicts with researcher changes in {relative}"
+        )
+    return content.replace(old, new, 1)
+
+
+def _prepare_v2_to_v3(root: Path, changes: dict[Path, str]) -> None:
+    readme_path, readme = _pending_content(root, changes, "README.md")
+    readme = _replace_managed_fragment(
+        readme,
+        "dvc status\nhomebrew-mlflow run --experiment <name> -- dvc exp run -n <experiment-name>\n"
+        "dvc metrics show",
+        "uv run --frozen dvc status\n"
+        "homebrew-mlflow run --experiment <name> -- dvc exp run -n <experiment-name>\n"
+        "uv run --frozen dvc metrics show",
+        "README.md",
+    )
+    readme = _replace_managed_fragment(
+        readme,
+        "`dvc push -r platform` transfers",
+        "`uv run --frozen dvc push -r platform` transfers",
+        "README.md",
+    )
+    changes[readme_path] = readme
+
+    agents_path, agents = _pending_content(root, changes, "AGENTS.md")
+    agents = _replace_managed_fragment(
+        agents,
+        "dvc status\ndvc push -r platform",
+        "uv run --frozen dvc status\nuv run --frozen dvc push -r platform",
+        "AGENTS.md",
+    )
+    changes[agents_path] = agents
+
+
+def _prepare_v3_to_v4(root: Path, changes: dict[Path, str]) -> None:
+    agents_path, agents = _pending_content(root, changes, "AGENTS.md")
+    agents = _replace_managed_fragment(
+        agents,
+        "recent commits, `dvc status`, and `dvc dag` before changing",
+        "recent commits, `uv run --frozen dvc status`, and\n"
+        "   `uv run --frozen dvc dag` before changing",
+        "AGENTS.md",
+    )
+    explanation = (
+        "The Run helper executes the child through the declared uv environment; "
+        "do not add a nested "
+        "`uv run`\ninside `homebrew-mlflow run`."
+    )
+    agents = _replace_managed_fragment(
+        agents,
+        "homebrew-mlflow run --experiment <name> -- dvc exp run -n <name>\n```",
+        "homebrew-mlflow run --experiment <name> -- dvc exp run -n <name>\n```\n\n"
+        + explanation,
+        "AGENTS.md",
+    )
+    changes[agents_path] = agents
+
+    readme_path, readme = _pending_content(root, changes, "README.md")
+    readme_explanation = (
+        "The Run helper executes its child through the selected uv environment, "
+        "so the command after `--` "
+        "stays\n`dvc ...` rather than nesting another `uv run`."
+    )
+    readme = _replace_managed_fragment(
+        readme,
+        "uv run --frozen dvc metrics show\n```",
+        "uv run --frozen dvc metrics show\n```\n\n" + readme_explanation,
+        "README.md",
+    )
+    changes[readme_path] = readme
 
 
 def read_repository_dvc_configuration(

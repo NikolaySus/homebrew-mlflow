@@ -26,6 +26,9 @@ homebrew-mlflow run --experiment <name> -- dvc exp run -n <experiment-name>
 uv run --frozen dvc metrics show
 ```
 
+The Run helper executes its child through the selected uv environment, so the command after `--` stays
+`dvc ...` rather than nesting another `uv run`.
+
 The tracked `homebrew-mlflow.toml` selects the default `uv` environment. The CLI captures and resolves
 the exact lock/runtime revision automatically; `.venv` remains local while `uv.lock` is committed.
 

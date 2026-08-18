@@ -4,10 +4,13 @@ import hashlib
 import json
 from dataclasses import dataclass
 from time import monotonic
+from types import SimpleNamespace
 from typing import Any
+from uuid import uuid4
 
 import pytest
 from homebrew_mlflow.application import PublicationValidationError
+from homebrew_mlflow.domain import PublicId, ResourceKind
 from homebrew_mlflow.infrastructure import GitLabDvcPublicationValidator
 
 
@@ -45,6 +48,28 @@ def validator(objects: dict[str, bytes], *, max_bytes: int = 1024) -> GitLabDvcP
 
 def md5_digest(value: bytes) -> str:
     return hashlib.md5(value, usedforsecurity=False).hexdigest()
+
+
+def test_incomplete_run_cannot_be_used_for_publication() -> None:
+    class Result:
+        def one_or_none(self) -> SimpleNamespace:
+            return SimpleNamespace(id=uuid4(), provenance_status="incomplete")
+
+    class Session:
+        def scalar(self, _statement: object) -> object:
+            return uuid4()
+
+        def execute(self, _statement: object) -> Result:
+            return Result()
+
+    instance = object.__new__(GitLabDvcPublicationValidator)
+    instance._session = Session()  # type: ignore[attr-defined]
+
+    with pytest.raises(PublicationValidationError, match="run_provenance_incomplete"):
+        instance._run(
+            PublicId.generate(ResourceKind.PROJECT),
+            str(PublicId.generate(ResourceKind.RUN)),
+        )
 
 
 def test_file_object_is_streamed_and_rehashed() -> None:

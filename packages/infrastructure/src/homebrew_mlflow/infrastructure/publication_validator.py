@@ -159,14 +159,16 @@ class GitLabDvcPublicationValidator:
             run_id = PublicId(ResourceKind.RUN, str(value))
         except ValueError as error:
             raise PublicationValidationError("run_not_found") from error
-        exists = self._session.scalar(
-            select(RunRow.id).where(
+        run = self._session.execute(
+            select(RunRow.id, RunRow.provenance_status).where(
                 RunRow.public_id == str(run_id),
                 RunRow.project_id == self._project_key(project_id),
             )
-        )
-        if exists is None:
+        ).one_or_none()
+        if run is None:
             raise PublicationValidationError("run_not_found")
+        if run.provenance_status != "complete":
+            raise PublicationValidationError("run_provenance_incomplete")
         return run_id
 
     def _require_commit(self, provider_id: str, commit_sha: str) -> None:

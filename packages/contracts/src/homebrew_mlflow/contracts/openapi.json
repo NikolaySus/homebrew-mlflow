@@ -889,6 +889,8 @@
           "exit_code": {"type": "integer"},
           "status": {"type": "string", "enum": ["succeeded", "failed", "interrupted"]},
           "git_commit_sha": {"type": ["string", "null"], "pattern": "^[0-9a-f]{40,64}$"},
+          "provenance_status": {"type": ["string", "null"], "enum": ["complete", "incomplete", "invalid", null]},
+          "dvc_experiment_revision": {"type": ["string", "null"], "pattern": "^[0-9a-f]{40}$"},
           "evidence": {"type": "object", "additionalProperties": true},
           "pipeline_version_id": {"type": ["string", "null"], "pattern": "^pv_[0-9A-HJKMNP-TV-Z]{26}$"},
           "environment_specification_id": {"type": ["string", "null"], "pattern": "^env_[0-9A-HJKMNP-TV-Z]{26}$"}
@@ -896,7 +898,7 @@
       },
       "RunResponse": {
         "type": "object", "additionalProperties": false,
-        "required": ["id", "project_id", "experiment_id", "repository_id", "pipeline_version_id", "environment_specification_id", "state", "command", "heartbeat_at", "ended_at", "exit_code", "logging_token"],
+        "required": ["id", "project_id", "experiment_id", "repository_id", "pipeline_version_id", "environment_specification_id", "state", "command", "heartbeat_at", "ended_at", "exit_code", "provenance_status", "dvc_experiment_revision", "logging_token"],
         "properties": {
           "id": {"type": "string", "pattern": "^run_[0-9A-HJKMNP-TV-Z]{26}$"},
           "project_id": {"type": "string"}, "experiment_id": {"type": "string"}, "repository_id": {"type": "string"},
@@ -906,6 +908,8 @@
           "heartbeat_at": {"type": ["string", "null"], "format": "date-time"},
           "ended_at": {"type": ["string", "null"], "format": "date-time"},
           "exit_code": {"type": ["integer", "null"]},
+          "provenance_status": {"type": "string", "enum": ["pending", "complete", "incomplete", "invalid"]},
+          "dvc_experiment_revision": {"type": ["string", "null"], "pattern": "^[0-9a-f]{40}$"},
           "logging_token": {"type": ["string", "null"], "description": "Returned when a Run is created or heartbeated; bound to this Run and the tracking audience."}
         }
       },
@@ -916,11 +920,14 @@
       },
       "RunDetailResponse": {
         "type": "object", "additionalProperties": false,
-        "required": ["run", "created_at", "started_at", "git_commit_sha", "finalization_evidence", "input_artifact_version_ids", "output_artifact_version_ids", "parameters", "metrics", "tags"],
+        "required": ["run", "created_at", "started_at", "git_commit_sha", "provenance_status", "dvc_experiment_revision", "finalization_evidence", "input_artifact_version_ids", "output_artifact_version_ids", "parameters", "metrics", "tags"],
         "properties": {
           "run": {"$ref": "#/components/schemas/RunResponse"},
           "created_at": {"type": "string", "format": "date-time"}, "started_at": {"type": ["string", "null"], "format": "date-time"},
-          "git_commit_sha": {"type": ["string", "null"]}, "finalization_evidence": {"type": ["object", "null"]},
+          "git_commit_sha": {"type": ["string", "null"]},
+          "provenance_status": {"type": "string", "enum": ["pending", "complete", "incomplete", "invalid"]},
+          "dvc_experiment_revision": {"type": ["string", "null"]},
+          "finalization_evidence": {"type": ["object", "null"]},
           "input_artifact_version_ids": {"type": "array", "items": {"type": "string"}},
           "output_artifact_version_ids": {"type": "array", "items": {"type": "string"}},
           "parameters": {"type": "array", "items": {"$ref": "#/components/schemas/ParameterInput"}},

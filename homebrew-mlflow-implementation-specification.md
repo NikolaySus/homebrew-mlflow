@@ -311,6 +311,13 @@ State transitions must be validated in the domain layer. Terminal Runs are immut
 
 The platform never launches the command.
 
+The clean, pushed source commit is validated before launch. After launch, command outcome and provenance
+quality are independent: the child exit code determines Run success, while provenance is `COMPLETE`,
+`INCOMPLETE`, or `INVALID`. A single DVC experiment ref created or advanced from the source commit is a
+complete immutable exploration identity even when its expected lock/output changes leave the worktree dirty.
+Dirty state without such an identity is incomplete; a changed `HEAD`, runtime drift, or ambiguous experiment
+refs are invalid and must produce a visible warning without rewriting a successful child exit code.
+
 ### 10.2 Run-scoped credential
 
 A Run-scoped logging credential MAY last for the configured maximum Run duration, but MUST:
@@ -334,6 +341,11 @@ Run finalization records at least:
 - helper, launcher, MLflow client, DVC, and relevant runtime versions;
 - safe Secret Context only;
 - child exit code and failure summary after redaction.
+
+The canonical Run stores the pushed source/base commit, explicit provenance status, and the full DVC
+experiment revision when one was resolved. Client-captured DVC metadata and output candidates are evidence,
+not authoritative publication hashes. A publication that attributes an incomplete or invalid Run is rejected;
+the publication validator still derives artifact identity from hosted Git/DVC state.
 
 Content-hash equality MUST NOT be used to guess an Artifact Version ID.
 
@@ -586,6 +598,7 @@ At minimum implement:
 - `commit_not_found`
 - `artifact_not_found`
 - `run_not_found`
+- `run_provenance_incomplete`
 - `selector_not_found`
 - `uncommitted_state` (client-side script validation)
 - `unsupported_dvc_metadata`
@@ -665,7 +678,7 @@ Required commands:
 | --- | --- |
 | `homebrew-mlflow login` | GitLab-backed terminal/device login, platform session creation, OS-keyring refresh storage, optional Infisical browser login coordination |
 | `homebrew-mlflow doctor` | Verify platform session, repository/project mapping, MLflow, the repository-pinned DVC executable and remote, and enabled Infisical CLI/version/session/access; never print secrets or mutate the remote |
-| `homebrew-mlflow repository configure` | Reconcile only platform-managed DVC/AWS configuration and standard local DVC ignores, install the generated AWS profile, and report tracked files that the researcher must review and commit |
+| `homebrew-mlflow repository configure` | Preflight and apply safe versioned migrations to platform-managed repository instructions/context, reconcile DVC/AWS configuration and standard local DVC ignores, install the generated AWS profile, and report tracked files that the researcher must review and commit |
 | `homebrew-mlflow run -- ...` | Create/finalize a local Run, supply scoped credentials, optionally wrap with `infisical run` |
 | `homebrew-mlflow logout` | Revoke current platform refresh family and remove local credential; do not silently log out Infisical |
 
@@ -859,9 +872,12 @@ Platform-created repositories include:
 - brief README instructions for native Git/DVC, helper setup, tracking, and publication;
 - autologging examples configured not to upload model binaries.
 
-Template v3 includes the standard `.dvc/.gitignore`, a project-scoped DVC remote, and uv-mediated
-standalone DVC commands. Existing repositories adopt these platform-managed settings idempotently through
-`homebrew-mlflow repository configure`; the helper never commits the resulting tracked changes.
+Template v3 includes the standard `.dvc/.gitignore` and a project-scoped DVC remote. Template v4 makes every
+standalone DVC instruction uv-mediated and explains that `homebrew-mlflow run` already launches its child
+through the selected environment. Existing repositories adopt managed settings through ordered, idempotent
+template migrations in `homebrew-mlflow repository configure`. Migrations use narrow known-fragment edits,
+preserve unrelated researcher text, preflight conflicts before tracked writes, refuse newer template versions,
+and update the sentinel only after the migration succeeds. The helper reports changes and never commits them.
 
 Publication scripts must:
 
