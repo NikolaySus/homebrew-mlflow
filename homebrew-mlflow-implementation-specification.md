@@ -882,7 +882,8 @@ Template v3 includes the standard `.dvc/.gitignore` and a project-scoped DVC rem
 standalone DVC instruction uv-mediated and explains that `homebrew-mlflow run` already launches its child
 through the selected environment. Template v5 pins the MLflow integration that supplies rotating token-file
 request authentication. Its migration updates only the managed dependency and corresponding locked wheel;
-the prior immutable wheel remains available for rollback. Existing repositories adopt managed settings through ordered, idempotent
+it matches rendered lock entries using the repository context's normalized platform URL, and the prior
+immutable wheel remains available for rollback. Existing repositories adopt managed settings through ordered, idempotent
 template migrations in `homebrew-mlflow repository configure`. Migrations use narrow known-fragment edits,
 preserve unrelated researcher text, preflight conflicts before tracked writes, refuse newer template versions,
 and update the sentinel only after the migration succeeds. The helper reports changes and never commits them.

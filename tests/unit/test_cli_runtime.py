@@ -154,18 +154,18 @@ def test_repository_template_upgrade_preserves_custom_text_and_is_idempotent(
         'dependencies = ["homebrew-mlflow-plugins==0.1.0"]\n', encoding="utf-8"
     )
     old_wheel = (
-        '    { url = "{{ platform_url }}/packages/files/'
+        '    { url = "https://ml.example/packages/files/'
         'homebrew_mlflow_plugins-0.1.0-py3-none-any.whl", '
         'hash = "sha256:efe3e890c1fe7002552f2611443aadf504e1d569a6d4888d6f193004147bcadd" },'
     )
     old_requirement = (
         '    { name = "homebrew-mlflow-plugins", specifier = "==0.1.0", '
-        'index = "{{ platform_url }}/packages/simple/" }'
+        'index = "https://ml.example/packages/simple/" }'
     )
     old_lock = '''[[package]]
 name = "homebrew-mlflow-plugins"
 version = "0.1.0"
-source = { registry = "{{ platform_url }}/packages/simple/" }
+source = { registry = "https://ml.example/packages/simple/" }
 dependencies = [
     { name = "mlflow" },
     { name = "requests" },

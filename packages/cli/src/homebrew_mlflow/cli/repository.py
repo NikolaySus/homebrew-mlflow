@@ -75,7 +75,10 @@ def prepare_repository_template_upgrade(root: Path) -> RepositoryTemplateUpgrade
         elif current == 3:
             _prepare_v3_to_v4(root, content_by_path)
         elif current == 4:
-            _prepare_v4_to_v5(root, content_by_path)
+            server = sentinel.get("server")
+            if not isinstance(server, str) or not server.startswith(("http://", "https://")):
+                raise RuntimeError("repository server URL is missing or invalid")
+            _prepare_v4_to_v5(root, content_by_path, server.rstrip("/"))
         current += 1
     sentinel["template_version"] = current
     content_by_path[sentinel_path] = json.dumps(sentinel, indent=2, ensure_ascii=False) + "\n"
@@ -169,7 +172,9 @@ def _prepare_v3_to_v4(root: Path, changes: dict[Path, str]) -> None:
     changes[readme_path] = readme
 
 
-def _prepare_v4_to_v5(root: Path, changes: dict[Path, str]) -> None:
+def _prepare_v4_to_v5(
+    root: Path, changes: dict[Path, str], platform_url: str
+) -> None:
     pyproject_path, pyproject = _pending_content(root, changes, "pyproject.toml")
     pyproject = _replace_managed_fragment(
         pyproject,
@@ -181,14 +186,14 @@ def _prepare_v4_to_v5(root: Path, changes: dict[Path, str]) -> None:
 
     lock_path, lock = _pending_content(root, changes, "uv.lock")
     old_wheel = (
-        '    { url = "{{ platform_url }}/packages/files/'
+        f'    {{ url = "{platform_url}/packages/files/'
         'homebrew_mlflow_plugins-0.1.0-py3-none-any.whl", '
         'hash = "sha256:efe3e890c1fe7002552f2611443aadf504e1d569a6d4888d6f193004147bcadd" },'
     )
     old_package = f'''[[package]]
 name = "homebrew-mlflow-plugins"
 version = "0.1.0"
-source = {{ registry = "{{{{ platform_url }}}}/packages/simple/" }}
+source = {{ registry = "{platform_url}/packages/simple/" }}
 dependencies = [
     {{ name = "mlflow" }},
     {{ name = "requests" }},
@@ -209,7 +214,7 @@ wheels = [
     lock = _replace_managed_fragment(lock, old_package, new_package, "uv.lock")
     old_requirement = (
         '{ name = "homebrew-mlflow-plugins", specifier = "==0.1.0", '
-        'index = "{{ platform_url }}/packages/simple/" }'
+        f'index = "{platform_url}/packages/simple/" }}'
     )
     lock = _replace_managed_fragment(
         lock,
