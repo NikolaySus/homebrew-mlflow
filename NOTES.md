@@ -7,7 +7,7 @@ User command mistakes and problems caused solely by an outdated local CLI are in
 
 ### Successful DVC push emits a credential-refresh traceback
 
-**State:** Fixed in CLI 0.2.3 source; awaiting deployed-client verification.
+**State:** Deployed in CLI 0.2.3; awaiting a real DVC transfer verification.
 
 An approved five-object `dvc push` completed and returned exit code zero, but afterward aiobotocore attempted
 an advisory credential refresh and printed a full `CredentialRetrievalError` traceback caused by a TLS
@@ -20,12 +20,12 @@ failed.
 
 Verification: the helper now retries connection and TLS-establishment failures three times with bounded
 backoff, does not replay ambiguous read or HTTP failures, and emits a redacted one-line terminal error.
-Unit tests cover recovery, exhaustion, and non-retry behavior. A real DVC transfer with the deployed CLI
-remains required before marking this resolved.
+Unit tests cover recovery, exhaustion, and non-retry behavior. CLI 0.2.3 installs successfully from the
+production index. A real DVC transfer remains required before marking this resolved.
 
 ### Direct MLflow logging is rejected by the platform proxy
 
-**State:** Fixed in deployment source; awaiting production verification.
+**State:** Deployed; public Host verification passed, awaiting managed Run logging verification.
 
 During Run `run_01M0B1DTPGEHFW5YAA6ANR73PA`, the local DVC stage completed its computation but
 `mlflow.log_metrics` received HTTP 403 from `/mlflow/api/2.0/mlflow/runs/get` with `Invalid Host header -
@@ -36,12 +36,13 @@ reverse proxy, including the Host/forwarded-host combination. DVC-native metrics
 this repository and are not duplicated through the fluent MLflow API.
 
 Verification: the rebuilt MLflow image accepts `ml.spkya.ru` on a tracking API path while rejecting an
-unlisted host with HTTP 403. Compose acceptance now probes an API path rather than the host-validation-
-exempt health endpoint. A managed production Run remains required before marking this resolved.
+unlisted host with HTTP 403. Production now routes the formerly rejected API path into MLflow without an
+`Invalid Host` response, and the production Compose acceptance probe passes. A managed Run remains required
+before marking this resolved.
 
 ### Service index omits a required repository dependency
 
-**State:** Fixed in package-build source; awaiting production publication.
+**State:** Resolved in the production package index.
 
 The generated `pyproject.toml` requires `homebrew-mlflow-plugins==0.1.0` from the explicit platform index,
 but `https://ml.spkya.ru/packages/simple/homebrew-mlflow-plugins/` returns HTTP 404. Existing frozen
@@ -53,8 +54,9 @@ service-hosted simple index, and a clean machine can run `uv sync --frozen` and 
 
 Verification: the reproducible plugin wheel matches the hash pinned by the repository template, the index
 builder publishes its project page and now rejects an incomplete first-party wheelhouse, and a rendered
-template completed a cache-disabled frozen sync against the locally served index. The production index
-must still receive the rebuilt package artifacts before marking this resolved.
+template completed a cache-disabled frozen sync against the locally served index. The production project
+page now returns HTTP 200, and `homebrew-mlflow-plugins==0.1.0` installs from that index on a clean Python
+environment.
 
 ### Generated DVC credentials cannot access the configured remote
 
