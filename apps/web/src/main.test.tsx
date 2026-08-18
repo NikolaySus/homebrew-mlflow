@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { App, suggestSlug } from "./main";
@@ -166,9 +166,14 @@ describe("project onboarding", () => {
 
     await screen.findByRole("link", { name: "Open in GitLab" });
     expect(screen.getByText("git@git.example:research/protein-folding.git")).not.toBeNull();
-    expect(screen.getByRole<HTMLOptionElement>("option", { name: "uv" }).selected).toBe(
-      true,
-    );
-    expect(screen.getByText(/not the local virtual-environment directory/)).not.toBeNull();
+    const metadata = screen.getByRole("region", { name: "Research metadata" });
+    expect(within(metadata).getByRole("heading", { name: "Experiments" })).not.toBeNull();
+    expect(
+      within(metadata).getByRole("heading", { name: "Pipeline definitions" }),
+    ).not.toBeNull();
+    expect(
+      within(metadata).getByRole("heading", { name: "Environment specifications" }),
+    ).not.toBeNull();
+    expect(metadata.querySelectorAll(":scope > .overviewInfoGroup")).toHaveLength(3);
   });
 });

@@ -1112,7 +1112,7 @@ export function App() {
             </nav>
             {error && <div className="error">{error}</div>}
             {tab === "overview" && (
-              <>
+              <div className="overview">
                 <section>
                   <Title
                     title="Hosted repositories"
@@ -1158,85 +1158,96 @@ export function App() {
                     ))}
                   </div>
                 </section>
-                <section>
-                  <Title title="Experiments" count={experiments.length} />
-                  <div className="grid">
-                    {experiments.map((experiment) => (
-                      <article key={experiment.id}>
-                        <strong>{experiment.name}</strong>
-                        <p>
-                          <code>{experiment.id}</code>
+                <section className="overviewInfo" aria-label="Research metadata">
+                  <div className="overviewInfoGroup">
+                    <Title title="Experiments" count={experiments.length} />
+                    <div className="overviewInfoBody">
+                      <div className="metadataList">
+                        {experiments.map((experiment) => (
+                          <div className="metadataItem" key={experiment.id}>
+                            <strong>{experiment.name}</strong>
+                            <code>{experiment.id}</code>
+                            <small>
+                              {new Date(experiment.created_at).toLocaleString()}
+                            </small>
+                            <button
+                              className="linkButton"
+                              onClick={() => archiveExperiment(experiment.id)}
+                            >
+                              archive
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                      {experiments.length === 0 && (
+                        <p className="hint compactHint">
+                          Experiments appear when the first Run is created.
                         </p>
-                        <small>
-                          {new Date(experiment.created_at).toLocaleString()}
-                        </small>
-                        <button
-                          className="linkButton"
-                          onClick={() => archiveExperiment(experiment.id)}
-                        >
-                          archive
-                        </button>
-                      </article>
-                    ))}
+                      )}
+                    </div>
                   </div>
-                </section>
-                <section>
-                  <Title
-                    title="Pipeline definitions"
-                    count={pipelines.length}
-                  />
-                  <div className="grid">
-                    {pipelines.map((pipeline) => (
-                      <article
-                        key={pipeline.id}
-                        onClick={async () =>
-                          setPipelineVersions(
-                            await request(
-                              `/api/v1/pipeline-definitions/${pipeline.id}/versions`,
-                            ),
-                          )
-                        }
-                      >
-                        <strong>{pipeline.name}</strong>
-                        <p>
-                          <code>{pipeline.id}</code>
-                        </p>
-                      </article>
-                    ))}
+                  <div className="overviewInfoGroup">
+                    <Title
+                      title="Pipeline definitions"
+                      count={pipelines.length}
+                    />
+                    <div className="overviewInfoBody">
+                      <div className="metadataList">
+                        {pipelines.map((pipeline) => (
+                          <button
+                            className="metadataItem metadataButton"
+                            key={pipeline.id}
+                            onClick={async () =>
+                              setPipelineVersions(
+                                await request(
+                                  `/api/v1/pipeline-definitions/${pipeline.id}/versions`,
+                                ),
+                              )
+                            }
+                          >
+                            <strong>{pipeline.name}</strong>
+                            <code>{pipeline.id}</code>
+                            <small>view immutable versions</small>
+                          </button>
+                        ))}
+                      </div>
+                      <p className="hint compactHint">
+                        Discovered from committed <code>dvc.yaml</code> files when
+                        Runs finalize.
+                      </p>
+                      {pipelineVersions.map((item) => (
+                        <div className="versionSummary" key={item.id}>
+                          <code>{item.id}</code>
+                          <span>
+                            {item.pipeline_path} @ {item.git_commit_sha.slice(0, 10)}
+                          </span>
+                          <small>sha256:{item.content_sha256.slice(0, 12)}</small>
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                  <p className="hint">
-                    Pipeline definitions and immutable versions are discovered
-                    from committed <code>dvc.yaml</code> files when Runs finalize.
-                  </p>
-                  {pipelineVersions.map((item) => (
-                    <p key={item.id}>
-                      <code>{item.id}</code> {item.pipeline_path} @{" "}
-                      {item.git_commit_sha.slice(0, 10)} · sha256:
-                      {item.content_sha256.slice(0, 12)}
-                    </p>
-                  ))}
-                </section>
-                <section>
-                  <Title
-                    title="Environment specifications"
-                    count={environments.length}
-                  />
-                  <div className="grid">
-                    {environments.map((item) => (
-                      <article key={item.id}>
-                        <strong>{item.name}</strong>
-                        <span className="state">{item.kind}</span>
-                        <p><code>{item.id}</code></p>
-                        <small>sha256:{item.sha256.slice(0, 12)}</small>
-                      </article>
-                    ))}
+                  <div className="overviewInfoGroup">
+                    <Title
+                      title="Environment specifications"
+                      count={environments.length}
+                    />
+                    <div className="overviewInfoBody">
+                      <div className="metadataList">
+                        {environments.map((item) => (
+                          <div className="metadataItem" key={item.id}>
+                            <strong>{item.name}</strong>
+                            <span className="state compactState">{item.kind}</span>
+                            <code>{item.id}</code>
+                            <small>sha256:{item.sha256.slice(0, 12)}</small>
+                          </div>
+                        ))}
+                      </div>
+                      <p className="hint compactHint">
+                        Captured from the runtime by <code>homebrew-mlflow run</code>
+                        {" "}and named in <code>homebrew-mlflow.toml</code>.
+                      </p>
+                    </div>
                   </div>
-                  <p className="hint">
-                    Environment revisions are captured from the actual runtime
-                    and resolved automatically by <code>homebrew-mlflow run</code>.
-                    Configure the logical name and runtime kind in the tracked{" "}
-                    <code>homebrew-mlflow.toml</code> file.
-                  </p>
                 </section>
                 <section className="command">
                   <p className="label">Native workflow</p>
@@ -1246,7 +1257,7 @@ export function App() {
                     {"\n"}./scripts/dvc-publish.sh …
                   </pre>
                 </section>
-              </>
+              </div>
             )}
             {tab === "runs" && (
               <>
