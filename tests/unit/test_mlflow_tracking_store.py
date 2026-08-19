@@ -122,6 +122,8 @@ def test_tracking_store_reports_unsupported_native_surfaces(
 
 
 def test_tracking_store_searches_browser_workspace(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    from mlflow.server.handlers import _search_runs
+
     monkeypatch.setenv("HOMEBREW_MLFLOW_PLATFORM_INTERNAL_URL", "http://api:8000")
     workspace = "pr-01k00000000000000000000000"
     payload = {
@@ -147,7 +149,7 @@ def test_tracking_store_searches_browser_workspace(monkeypatch) -> None:  # type
                 "attachment_uri": "homebrew://run_01K00000000000000000000000",
                 "parameters": [{"key": "seed", "value": "42"}],
                 "metrics": [{"key": "loss", "value": 0.25, "timestamp_ms": 2, "step": 1}],
-                "tags": [{"key": "model", "value": "resnet"}],
+                "tags": [],
                 "input_artifact_version_ids": ["av_dataset"],
                 "output_artifact_version_ids": ["av_model"],
             }
@@ -188,25 +190,47 @@ def test_tracking_store_searches_browser_workspace(monkeypatch) -> None:  # type
     authorization = _token(
         {"scp": ["read"], "prj": "pr_01K00000000000000000000000"}
     )
-    with app.test_request_context(headers={"Authorization": f"Bearer {authorization}"}):
+    store = HomebrewTrackingStore("homebrew://platform")
+    monkeypatch.setattr("mlflow.server.handlers._get_tracking_store", lambda: store)
+    with app.test_request_context(
+        "/ajax-api/2.0/mlflow/runs/search",
+        method="POST",
+        json={
+            "experiment_ids": ["exp_01K00000000000000000000000"],
+            "run_view_type": "ACTIVE_ONLY",
+            "max_results": 10,
+        },
+        headers={"Authorization": f"Bearer {authorization}"},
+    ):
         set_server_request_workspace(workspace)
         try:
-            experiments = HomebrewTrackingStore("homebrew://platform").search_experiments(
+            experiments = store.search_experiments(
                 max_results=25,
                 filter_string="tags.`mlflow.experiment.isGateway` IS NULL",
                 order_by=["last_update_time DESC"],
             )
-            runs = HomebrewTrackingStore("homebrew://platform").search_runs(
+            runs = store.search_runs(
                 ["exp_01K00000000000000000000000"], None, 1, max_results=10
             )
-            datasets = HomebrewTrackingStore("homebrew://platform")._search_datasets(
+            datasets = store._search_datasets(
                 ["exp_01K00000000000000000000000"]
             )
+            search_response = _search_runs()
         finally:
             clear_server_request_workspace()
     assert [item.name for item in experiments] == ["baseline"]
     assert runs[0].data.metrics == {"loss": 0.25}
     assert runs[0].data.params == {"seed": "42"}
+    assert runs[0].data.tags["mlflow.runName"] == "run_01K00000000000000000000000"
+    assert (
+        runs[0].data.tags["mlflow.user"]
+        == "principal_01K00000000000000000000000"
+    )
+    serialized_tags = search_response.get_json()["runs"][0]["data"]["tags"]
+    assert {item["key"] for item in serialized_tags} == {
+        "mlflow.runName",
+        "mlflow.user",
+    }
     assert runs[0].inputs.dataset_inputs[0].dataset.name == "training-data"
     assert runs[0].inputs.dataset_inputs[0].dataset.digest == f"md5:{'a' * 32}"
     assert runs[0].outputs.model_outputs[0].model_id == "m-0123456789abcdef"

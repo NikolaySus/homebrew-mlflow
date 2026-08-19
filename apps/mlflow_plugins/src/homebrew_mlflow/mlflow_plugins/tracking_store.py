@@ -232,6 +232,17 @@ class HomebrewTrackingStore(AbstractStore):
             value = models.get(version_id)
             if value is not None:
                 model_outputs.append(LoggedModelOutput(value[1]["mlflow_model_id"], 0))
+        tags = [
+            RunTag(item["key"], item["value"])  # type: ignore[no-untyped-call]
+            for item in payload["tags"]
+        ]
+        tag_keys = {item.key for item in tags}
+        for key, value in (
+            ("mlflow.runName", payload["id"]),
+            ("mlflow.user", payload.get("creator_principal_id", "homebrew-mlflow")),
+        ):
+            if key not in tag_keys:
+                tags.append(RunTag(key, value))  # type: ignore[no-untyped-call]
         return Run(
             RunInfo(  # type: ignore[no-untyped-call]
                 payload["id"],
@@ -250,10 +261,7 @@ class HomebrewTrackingStore(AbstractStore):
                     Param(item["key"], item["value"])  # type: ignore[no-untyped-call]
                     for item in payload["parameters"]
                 ],
-                tags=[
-                    RunTag(item["key"], item["value"])  # type: ignore[no-untyped-call]
-                    for item in payload["tags"]
-                ],
+                tags=tags,
             ),
             RunInputs(dataset_inputs),
             RunOutputs(model_outputs),
