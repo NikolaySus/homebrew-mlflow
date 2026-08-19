@@ -1,0 +1,418 @@
+diff --git a/mlflow/server/js/src/MlflowRouter.tsx b/mlflow/server/js/src/MlflowRouter.tsx
+index 3bac9f316..19c066490 100644
+--- a/mlflow/server/js/src/MlflowRouter.tsx
++++ b/mlflow/server/js/src/MlflowRouter.tsx
+@@ -24,13 +24,10 @@ import { useWorkspacesEnabled } from './experiment-tracking/hooks/useServerInfo'
+ import { getRouteDefs as getExperimentTrackingRouteDefs } from './experiment-tracking/route-defs';
+ import { getRouteDefs as getModelRegistryRouteDefs } from './model-registry/route-defs';
+ import { getRouteDefs as getCommonRouteDefs } from './common/route-defs';
+-import { getGatewayRouteDefs } from './gateway/route-defs';
+ import { getAccountRouteDefs } from './account/route-defs';
+ import { getAdminRouteDefs } from './admin/route-defs';
+-import { getMCPRegistryRouteDefs } from './mcp-registry/route-defs';
+ import { DEV_USER_SWITCHER_ENABLED } from './admin/DevUserSwitcher';
+ import { useInitializeExperimentRunColors } from './experiment-tracking/components/experiment-page/hooks/useExperimentRunColor';
+-import { IssueDetectionJobNotifications } from './experiment-tracking/components/experiment-page/components/traces-v3/IssueDetectionJobNotifications';
+ import { MlflowSidebar } from './common/components/MlflowSidebar';
+ import { AssistantProvider, AssistantRouteContextProvider } from './assistant';
+ import { RootAssistantLayout } from './common/components/RootAssistantLayout';
+@@ -85,7 +82,6 @@ const MlflowRootLayout = ({
+       <div css={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+         <ErrorModal />
+         <AppErrorBoundary>
+-          <IssueDetectionJobNotifications />
+           <RootAssistantLayout>
+             <div
+               css={{
+@@ -236,8 +232,6 @@ export const MlflowRouter = () => {
+     () => [
+       ...getExperimentTrackingRouteDefs(),
+       ...getModelRegistryRouteDefs(),
+-      ...getGatewayRouteDefs(),
+-      ...getMCPRegistryRouteDefs(),
+       ...getAccountRouteDefs(),
+       ...getAdminRouteDefs(),
+       ...getCommonRouteDefs(),
+diff --git a/mlflow/server/js/src/common/components/MlflowSidebar.tsx b/mlflow/server/js/src/common/components/MlflowSidebar.tsx
+index 8c265277a..7b685645b 100644
+--- a/mlflow/server/js/src/common/components/MlflowSidebar.tsx
++++ b/mlflow/server/js/src/common/components/MlflowSidebar.tsx
+@@ -42,7 +42,6 @@ import { WorkspaceSelector } from '../../workspaces/components/WorkspaceSelector
+ import { MlflowSidebarExperimentItems } from './MlflowSidebarExperimentItems';
+ import { MlflowSidebarGatewayItems } from './MlflowSidebarGatewayItems';
+ import { MlflowSidebarSettingsItems } from './MlflowSidebarSettingsItems';
+-import { MlflowSidebarWorkflowSwitch } from './MlflowSidebarWorkflowSwitch';
+ 
+ const isInsideExperiment = (location: Location) =>
+   Boolean(matchPath('/experiments/:experimentId/*', location.pathname));
+@@ -99,7 +98,7 @@ export function MlflowSidebar({
+   const { theme } = useDesignSystemTheme();
+   const enableWorkflowBasedNavigation = shouldEnableWorkflowBasedNavigation();
+   // WorkflowType context is always available, but UI is guarded by feature flag
+-  const { workflowType, setWorkflowType } = useWorkflowType();
++  const { workflowType } = useWorkflowType();
+   const { experimentId } = useParams();
+   const toggleSidebar = useCallback(() => {
+     setShowSidebar(!showSidebar);
+@@ -335,10 +334,6 @@ export function MlflowSidebar({
+           <FormattedMessage defaultMessage="Home" description="Sidebar link for home page" />
+         </MlflowSidebarLink>
+       )}
+-      {enableWorkflowBasedNavigation && showWorkspaceMenuItems && showSidebar && (
+-        <MlflowSidebarWorkflowSwitch workflowType={workflowType} setWorkflowType={setWorkflowType} />
+-      )}
+-
+       <nav
+         css={{
+           display: 'flex',
+diff --git a/mlflow/server/js/src/common/contexts/WorkflowTypeContext.tsx b/mlflow/server/js/src/common/contexts/WorkflowTypeContext.tsx
+index 035607d06..37a4a091b 100644
+--- a/mlflow/server/js/src/common/contexts/WorkflowTypeContext.tsx
++++ b/mlflow/server/js/src/common/contexts/WorkflowTypeContext.tsx
+@@ -13,11 +13,7 @@ export enum WorkflowType {
+  * if it is a valid WorkflowType, otherwise returns the provided fallback.
+  */
+ export const getWorkflowTypeFromUrl = (searchParams: URLSearchParams, fallback: WorkflowType): WorkflowType => {
+-  const value = searchParams.get('workflowType');
+-  if (value === WorkflowType.GENAI || value === WorkflowType.MACHINE_LEARNING) {
+-    return value;
+-  }
+-  return fallback;
++  return WorkflowType.MACHINE_LEARNING;
+ };
+ 
+ /**
+@@ -39,7 +35,7 @@ export const buildWorkflowTypeQueryString = (
+ 
+ const WORKFLOW_TYPE_STORAGE_KEY = 'mlflow.workflowType';
+ const WORKFLOW_TYPE_STORAGE_VERSION = 1;
+-const DEFAULT_WORKFLOW_TYPE = WorkflowType.GENAI;
++const DEFAULT_WORKFLOW_TYPE = WorkflowType.MACHINE_LEARNING;
+ 
+ interface WorkflowTypeContextType {
+   workflowType: WorkflowType;
+diff --git a/mlflow/server/js/src/experiment-tracking/pages/experiment-page-tabs/side-nav/constants.tsx b/mlflow/server/js/src/experiment-tracking/pages/experiment-page-tabs/side-nav/constants.tsx
+index 0d9c78241..ff01b281e 100644
+--- a/mlflow/server/js/src/experiment-tracking/pages/experiment-page-tabs/side-nav/constants.tsx
++++ b/mlflow/server/js/src/experiment-tracking/pages/experiment-page-tabs/side-nav/constants.tsx
+@@ -151,17 +151,6 @@ const ExperimentPageSideNavCustomModelConfig = {
+       tabName: ExperimentPageTabName.Models,
+       componentId: 'mlflow.experiment-side-nav.classic-ml.models',
+     },
+-    {
+-      label: (
+-        <FormattedMessage
+-          defaultMessage="Traces"
+-          description="Label for the traces tab in the MLflow experiment navbar"
+-        />
+-      ),
+-      icon: <ForkHorizontalIcon />,
+-      tabName: ExperimentPageTabName.Traces,
+-      componentId: 'mlflow.experiment-side-nav.classic-ml.traces',
+-    },
+   ],
+ };
+ 
+diff --git a/mlflow/server/js/src/model-registry/components/CreateModelButton.tsx b/mlflow/server/js/src/model-registry/components/CreateModelButton.tsx
+index 219516c09..fd3fe1622 100644
+--- a/mlflow/server/js/src/model-registry/components/CreateModelButton.tsx
++++ b/mlflow/server/js/src/model-registry/components/CreateModelButton.tsx
+@@ -1,53 +1,11 @@
+-import React, { useState } from 'react';
++import type React from 'react';
+ import type { ButtonProps } from '@databricks/design-system';
+-import { Button, PlusIcon } from '@databricks/design-system';
+-import { CreateModelModal } from './CreateModelModal';
+-import { FormattedMessage } from 'react-intl';
+ 
+ type Props = {
+   buttonType?: ButtonProps['type'];
+   buttonText?: React.ReactNode;
+ };
+ 
+-export function CreateModelButton({
+-  buttonType = 'primary',
+-  buttonText = <FormattedMessage defaultMessage="Create Model" description="Create button to register a new model" />,
+-}: Props) {
+-  const [modalVisible, setModalVisible] = useState<boolean>(false);
+-
+-  const hideModal = () => {
+-    setModalVisible(false);
+-  };
+-
+-  const showModal = () => {
+-    setModalVisible(true);
+-  };
+-
+-  return (
+-    <div css={styles.wrapper}>
+-      <Button
+-        componentId="codegen_mlflow_app_src_model-registry_components_CreateModelButton.tsx_28"
+-        className="create-model-btn"
+-        css={styles.getButtonSize(buttonType)}
+-        type={buttonType}
+-        onClick={showModal}
+-        data-testid="create-model-button"
+-        icon={buttonType === 'primary' ? <PlusIcon /> : undefined}
+-      >
+-        {buttonText}
+-      </Button>
+-      <CreateModelModal modalVisible={modalVisible} hideModal={hideModal} />
+-    </div>
+-  );
++export function CreateModelButton(_props: Props) {
++  return null;
+ }
+-
+-const styles = {
+-  getButtonSize: (buttonType: string) =>
+-    buttonType === 'primary'
+-      ? {
+-          height: '40px',
+-          width: 'fit-content',
+-        }
+-      : { padding: '0px' },
+-  wrapper: { display: 'inline' },
+-};
+diff --git a/mlflow/server/js/src/model-registry/components/ModelVersionView.tsx b/mlflow/server/js/src/model-registry/components/ModelVersionView.tsx
+index 7bb3bb94b..3cd25bc61 100644
+--- a/mlflow/server/js/src/model-registry/components/ModelVersionView.tsx
++++ b/mlflow/server/js/src/model-registry/components/ModelVersionView.tsx
+@@ -11,7 +11,7 @@ import type { NavigateFunction } from '../../common/utils/RoutingUtils';
+ import { Link } from '../../common/utils/RoutingUtils';
+ import { ModelRegistryRoutes } from '../routes';
+ import { TagAssignmentModal } from '../../common/components/TagAssignmentModal';
+-import { TagList } from '../../common/components/TagList';
++import { KeyValueTag } from '../../common/components/KeyValueTag';
+ import { PromoteModelButton } from './PromoteModelButton';
+ import { SchemaTable } from './SchemaTable';
+ import Utils from '../../common/utils/Utils';
+@@ -566,7 +566,9 @@ export class ModelVersionViewImpl extends React.Component<ModelVersionViewImplPr
+     return (
+       <Descriptions columns={1} data-testid="model-view-tags">
+         <Descriptions.Item label="Tags">
+-          <TagList tags={this.getTags()} onEdit={this.handleEditTags} />
++          {this.getTags().map((tag) => (
++            <KeyValueTag key={tag.key} tag={tag} />
++          ))}
+         </Descriptions.Item>
+       </Descriptions>
+     );
+@@ -586,12 +588,7 @@ export class ModelVersionViewImpl extends React.Component<ModelVersionViewImplPr
+         disabled: ACTIVE_STAGES.includes(this.props.modelVersion.current_stage),
+       },
+     ];
+-    return (
+-      <PageHeader title={title} breadcrumbs={breadcrumbs}>
+-        {!this.shouldHideDeleteOption() && <OverflowMenu menu={menu} />}
+-        {this.renderPomoteModelButton()}
+-      </PageHeader>
+-    );
++    return <PageHeader title={title} breadcrumbs={breadcrumbs} />;
+   }
+ 
+   render() {
+@@ -660,7 +657,6 @@ export class ModelVersionViewImpl extends React.Component<ModelVersionViewImplPr
+                 defaultMessage="Description"
+                 description="Title text for the description section on the model version view page"
+               />{' '}
+-              {!showDescriptionEditor ? this.renderDescriptionEditIcon() : null}
+             </span>
+           }
+           forceOpen={showDescriptionEditor}
+@@ -674,30 +670,6 @@ export class ModelVersionViewImpl extends React.Component<ModelVersionViewImplPr
+             showEditor={showDescriptionEditor}
+           />
+         </CollapsibleSection>
+-        {!this.sharedTaggingUIEnabled && (
+-          <div data-testid="tags-section">
+-            <CollapsibleSection
+-              title={
+-                <FormattedMessage
+-                  defaultMessage="Tags"
+-                  description="Title text for the tags section on the model versions view page"
+-                />
+-              }
+-              defaultCollapsed={Utils.getVisibleTagValues(tags).length === 0}
+-              data-testid="model-version-tags-section"
+-            >
+-              <EditableTagsTableView
+-                // @ts-expect-error TS(2322): Type '{ innerRef: RefObject<unknown>; handleAddTag... Remove this comment to see the full error message
+-                innerRef={this.formRef}
+-                handleAddTag={this.handleAddTag}
+-                handleDeleteTag={this.handleDeleteTag}
+-                handleSaveEdit={this.handleSaveEdit}
+-                tags={tags}
+-                isRequestPending={isTagsRequestPending}
+-              />
+-            </CollapsibleSection>
+-          </div>
+-        )}
+         <CollapsibleSection
+           title={
+             <FormattedMessage
+diff --git a/mlflow/server/js/src/model-registry/components/ModelView.tsx b/mlflow/server/js/src/model-registry/components/ModelView.tsx
+index 42efe2b0d..a3fedbd99 100644
+--- a/mlflow/server/js/src/model-registry/components/ModelView.tsx
++++ b/mlflow/server/js/src/model-registry/components/ModelView.tsx
+@@ -34,7 +34,7 @@ import {
+ } from '@databricks/design-system';
+ import type { KeyValueEntity } from '../../common/types';
+ import { Descriptions } from '../../common/components/Descriptions';
+-import { TagList } from '../../common/components/TagList';
++import { KeyValueTag } from '../../common/components/KeyValueTag';
+ import type { ModelVersionInfoEntity } from '../../experiment-tracking/types';
+ import { type ModelEntity } from '../../experiment-tracking/types';
+ import { shouldShowModelsNextUI, shouldUseSharedTaggingUI } from '../../common/utils/FeatureUtils';
+@@ -370,7 +370,9 @@ export class ModelViewImpl extends React.Component<ModelViewImplProps, ModelView
+         {this.sharedTaggingUIEnabled && (
+           <Descriptions columns={1} data-testid="model-view-tags">
+             <Descriptions.Item label="Tags">
+-              <TagList tags={this.getTags()} onEdit={this.handleEditTags} />
++              {this.getTags().map((tag) => (
++                <KeyValueTag key={tag.key} tag={tag} />
++              ))}
+             </Descriptions.Item>
+           </Descriptions>
+         )}
+@@ -384,7 +386,6 @@ export class ModelViewImpl extends React.Component<ModelViewImplProps, ModelView
+                 description="Title text for the description section under details tab on the model
+                    view page"
+               />{' '}
+-              {!showDescriptionEditor ? this.renderDescriptionEditIcon() : null}
+             </span>
+           }
+           forceOpen={showDescriptionEditor}
+@@ -398,32 +399,6 @@ export class ModelViewImpl extends React.Component<ModelViewImplProps, ModelView
+             showEditor={showDescriptionEditor}
+           />
+         </CollapsibleSection>
+-        {!this.sharedTaggingUIEnabled && (
+-          <div data-testid="tags-section">
+-            <CollapsibleSection
+-              css={styles.collapsiblePanel}
+-              title={
+-                <FormattedMessage
+-                  defaultMessage="Tags"
+-                  description="Title text for the tags section under details tab on the model view
+-                   page"
+-                />
+-              }
+-              defaultCollapsed={Utils.getVisibleTagValues(tags).length === 0}
+-              data-testid="model-tags-section"
+-            >
+-              <EditableTagsTableView
+-                // @ts-expect-error TS(2322): Type '{ innerRef: RefObject<unknown>; handleAddTag... Remove this comment to see the full error message
+-                innerRef={this.formRef}
+-                handleAddTag={this.handleAddTag}
+-                handleDeleteTag={this.handleDeleteTag}
+-                handleSaveEdit={this.handleSaveEdit}
+-                tags={tags}
+-                isRequestPending={isTagsRequestPending}
+-              />
+-            </CollapsibleSection>
+-          </div>
+-        )}
+         <CollapsibleSection
+           css={styles.collapsiblePanel}
+           title={
+diff --git a/mlflow/server/js/src/model-registry/components/aliases/ModelVersionViewAliasEditor.tsx b/mlflow/server/js/src/model-registry/components/aliases/ModelVersionViewAliasEditor.tsx
+index 7bb8af1fd..9d1d37c02 100644
+--- a/mlflow/server/js/src/model-registry/components/aliases/ModelVersionViewAliasEditor.tsx
++++ b/mlflow/server/js/src/model-registry/components/aliases/ModelVersionViewAliasEditor.tsx
+@@ -1,87 +1,17 @@
+-import { Button, PencilIcon } from '@databricks/design-system';
+-import type { ModelEntity } from '../../../experiment-tracking/types';
+-import { useEditAliasesModal } from '../../../common/hooks/useEditAliasesModal';
+ import { AliasTag } from '../../../common/components/AliasTag';
+-import { useCallback } from 'react';
+-import { useDispatch } from 'react-redux';
+-import { FormattedMessage } from 'react-intl';
+-import type { ThunkDispatch } from '../../../redux-types';
+-import { setModelVersionAliasesApi } from '../../actions';
+-import { mlflowAliasesLearnMoreLink } from '../../constants';
+-
+-const getAliasesModalTitle = (version: string) => (
+-  <FormattedMessage
+-    defaultMessage="Add/Edit alias for model version {version}"
+-    description="Model registry > model version alias editor > Title of the update alias modal"
+-    values={{ version }}
+-  />
+-);
++import type { ModelEntity } from '../../../experiment-tracking/types';
+ 
+ export const ModelVersionViewAliasEditor = ({
+   aliases = [],
+-  modelEntity,
+-  version,
+-  onAliasesModified,
+ }: {
+   modelEntity?: ModelEntity;
+   aliases?: string[];
+   version: string;
+   onAliasesModified?: () => void;
+-}) => {
+-  const dispatch = useDispatch<ThunkDispatch>();
+-
+-  const { EditAliasesModal, showEditAliasesModal } = useEditAliasesModal({
+-    aliases: modelEntity?.aliases ?? [],
+-    onSuccess: onAliasesModified,
+-    onSave: async (currentlyEditedVersion: string, existingAliases: string[], draftAliases: string[]) =>
+-      dispatch(
+-        setModelVersionAliasesApi(modelEntity?.name ?? '', currentlyEditedVersion, existingAliases, draftAliases),
+-      ),
+-    getTitle: getAliasesModalTitle,
+-    description: (
+-      <FormattedMessage
+-        defaultMessage="Aliases allow you to assign a mutable, named reference to a particular model version. <link>Learn more</link>"
+-        description="Explanation of registered model aliases"
+-        values={{
+-          link: (chunks) => (
+-            <a href={mlflowAliasesLearnMoreLink} rel="noreferrer" target="_blank">
+-              {chunks}
+-            </a>
+-          ),
+-        }}
+-      />
+-    ),
+-  });
+-  const onAddEdit = useCallback(() => {
+-    showEditAliasesModal(version);
+-  }, [showEditAliasesModal, version]);
+-  return (
+-    <>
+-      {EditAliasesModal}
+-      {aliases.length < 1 ? (
+-        <Button
+-          componentId="codegen_mlflow_app_src_model-registry_components_aliases_modelversionviewaliaseditor.tsx_29"
+-          size="small"
+-          type="link"
+-          onClick={onAddEdit}
+-          title="Add aliases"
+-        >
+-          Add
+-        </Button>
+-      ) : (
+-        <div css={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center' }}>
+-          {aliases.map((alias) => (
+-            <AliasTag compact value={alias} key={alias} />
+-          ))}
+-          <Button
+-            componentId="codegen_mlflow_app_src_model-registry_components_aliases_modelversionviewaliaseditor.tsx_37"
+-            size="small"
+-            icon={<PencilIcon />}
+-            onClick={onAddEdit}
+-            title="Edit aliases"
+-          />
+-        </div>
+-      )}
+-    </>
+-  );
+-};
++}) => (
++  <div css={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center' }}>
++    {aliases.map((alias) => (
++      <AliasTag compact value={alias} key={alias} />
++    ))}
++  </div>
++);

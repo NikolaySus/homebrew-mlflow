@@ -2,11 +2,14 @@
 
 from .artifacts import (
     Artifact,
+    ArtifactAlias,
+    ArtifactKind,
     ArtifactVersion,
     AvailabilityState,
     DvcOutputIdentity,
     IntegrityState,
     OutputKind,
+    normalize_artifact_alias,
 )
 from .attachments import RunAttachment
 from .audit import AuditEvent
@@ -54,6 +57,8 @@ __all__ = [
     "ArtifactSharingGrant",
     "ArtifactDerivation",
     "Artifact",
+    "ArtifactAlias",
+    "ArtifactKind",
     "ArtifactVersion",
     "AvailabilityState",
     "DvcOutputIdentity",
@@ -96,6 +101,7 @@ __all__ = [
     "SharedArtifactReference",
     "UnsafeArtifactPath",
     "normalize_artifact_path",
+    "normalize_artifact_alias",
     "normalize_file_index",
     "permits",
     "transition_run",

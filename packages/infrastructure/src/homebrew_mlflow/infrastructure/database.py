@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from datetime import UTC, datetime, timedelta
 from functools import lru_cache
 from typing import Any, cast
@@ -28,7 +29,9 @@ from homebrew_mlflow.application import (
 )
 from homebrew_mlflow.domain import (
     Artifact,
+    ArtifactAlias,
     ArtifactDerivation,
+    ArtifactKind,
     ArtifactSharingGrant,
     ArtifactVersion,
     AuditEvent,
@@ -71,12 +74,14 @@ from homebrew_mlflow.domain import (
 from sqlalchemy import (
     JSON,
     BigInteger,
+    CheckConstraint,
     DateTime,
     Float,
     ForeignKey,
     Integer,
     String,
     Text,
+    UniqueConstraint,
     Uuid,
     create_engine,
     delete,
@@ -441,17 +446,31 @@ class PublicationEventRow(Base):
 
 class ArtifactRow(Base):
     __tablename__ = "artifacts"
+    __table_args__ = (
+        CheckConstraint(
+            "kind IN ('dataset', 'model', 'checkpoint', 'report', 'generic')",
+            name="ck_artifacts_kind",
+        ),
+        UniqueConstraint("owning_project_id", "name", name="uq_artifacts_project_name"),
+    )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
     public_id: Mapped[str] = mapped_column(String(64), unique=True)
     owning_project_id: Mapped[UUID] = mapped_column(ForeignKey("research_projects.id"))
     name: Mapped[str] = mapped_column(String(200))
+    kind: Mapped[str] = mapped_column(String(24), default="generic")
+    description: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class ArtifactVersionRow(Base):
     __tablename__ = "artifact_versions"
+    __table_args__ = (
+        UniqueConstraint(
+            "artifact_id", "sequence", name="uq_artifact_versions_artifact_sequence"
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
     public_id: Mapped[str] = mapped_column(String(64), unique=True)
@@ -461,6 +480,10 @@ class ArtifactVersionRow(Base):
         ForeignKey("publication_operations.id"), unique=True
     )
     producing_run_id: Mapped[UUID | None] = mapped_column(ForeignKey("runs.id"))
+    sequence: Mapped[int] = mapped_column(default=1)
+    mlflow_model_id: Mapped[str] = mapped_column(
+        String(34), unique=True, default=lambda: f"m-{uuid4().hex}"
+    )
     algorithm: Mapped[str] = mapped_column(String(16))
     digest: Mapped[str] = mapped_column(String(64))
     output_kind: Mapped[str] = mapped_column(String(16))
@@ -470,6 +493,20 @@ class ArtifactVersionRow(Base):
     availability: Mapped[str] = mapped_column(String(16))
     published_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ArtifactAliasRow(Base):
+    __tablename__ = "artifact_aliases"
+
+    artifact_id: Mapped[UUID] = mapped_column(ForeignKey("artifacts.id"), primary_key=True)
+    alias: Mapped[str] = mapped_column(String(255), primary_key=True)
+    artifact_version_id: Mapped[UUID] = mapped_column(
+        ForeignKey("artifact_versions.id"), index=True
+    )
+    created_by: Mapped[UUID] = mapped_column(ForeignKey("principals.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_by: Mapped[UUID] = mapped_column(ForeignKey("principals.id"))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
 class ArtifactVersionFileRow(Base):
@@ -2658,6 +2695,8 @@ class SqlAlchemyArtifactCatalogUnitOfWork(SqlAlchemyRepositoryUnitOfWork):
             row.name,
             row.created_at,
             _utc(row.archived_at) if row.archived_at is not None else None,
+            ArtifactKind(row.kind),
+            row.description,
         )
 
     def artifact(self, artifact_id: PublicId) -> Artifact | None:
@@ -2675,6 +2714,8 @@ class SqlAlchemyArtifactCatalogUnitOfWork(SqlAlchemyRepositoryUnitOfWork):
             row.name,
             _utc(row.created_at),
             _utc(row.archived_at) if row.archived_at is not None else None,
+            ArtifactKind(row.kind),
+            row.description,
         )
 
     def add_artifact(self, artifact: Artifact) -> None:
@@ -2687,6 +2728,8 @@ class SqlAlchemyArtifactCatalogUnitOfWork(SqlAlchemyRepositoryUnitOfWork):
                 public_id=str(artifact.id),
                 owning_project_id=project_key,
                 name=artifact.name,
+                kind=artifact.kind.value,
+                description=artifact.description,
                 created_at=artifact.created_at,
                 archived_at=artifact.archived_at,
             )
@@ -2709,6 +2752,8 @@ class SqlAlchemyArtifactCatalogUnitOfWork(SqlAlchemyRepositoryUnitOfWork):
                 row.name,
                 row.created_at,
                 None,
+                ArtifactKind(row.kind),
+                row.description,
             )
             for row in rows
         )
@@ -2934,13 +2979,114 @@ class SqlAlchemyArtifactCatalogUnitOfWork(SqlAlchemyRepositoryUnitOfWork):
                 ArtifactStorageLocationRow.artifact_version_id == version_key
             )
         ) or 0
+        aliases = self._session.scalar(
+            select(func.count()).select_from(ArtifactAliasRow).where(
+                ArtifactAliasRow.artifact_version_id == version_key
+            )
+        ) or 0
         return RetentionDependencies(
             retained_runs=retained_runs,
             shared_references=shared_references,
             derivatives=derivatives,
             active_grants=active_grants,
             replicas=max(0, locations - 1),
+            aliases=aliases,
         )
+
+    def update_artifact(
+        self, artifact_id: PublicId, kind: ArtifactKind, description: str | None
+    ) -> None:
+        row = self._session.scalar(
+            select(ArtifactRow).where(ArtifactRow.public_id == str(artifact_id))
+        )
+        if row is None:
+            raise ValueError("Artifact does not exist")
+        row.kind = kind.value
+        row.description = description
+
+    def aliases(self, artifact_id: PublicId) -> tuple[ArtifactAlias, ...]:
+        rows = self._session.execute(
+            select(
+                ArtifactAliasRow,
+                ArtifactVersionRow.public_id,
+                PrincipalRow.public_id,
+            )
+            .join(
+                ArtifactVersionRow,
+                ArtifactVersionRow.id == ArtifactAliasRow.artifact_version_id,
+            )
+            .join(PrincipalRow, PrincipalRow.id == ArtifactAliasRow.updated_by)
+            .join(ArtifactRow, ArtifactRow.id == ArtifactAliasRow.artifact_id)
+            .where(ArtifactRow.public_id == str(artifact_id))
+            .order_by(ArtifactAliasRow.alias)
+        )
+        values: list[ArtifactAlias] = []
+        for row, version_id, updated_by in rows:
+            created_by = self._session.scalar(
+                select(PrincipalRow.public_id).where(PrincipalRow.id == row.created_by)
+            )
+            if created_by is None:
+                raise RuntimeError("Artifact alias creator does not exist")
+            values.append(
+                ArtifactAlias(
+                    artifact_id,
+                    row.alias,
+                    PublicId(ResourceKind.ARTIFACT_VERSION, version_id),
+                    PublicId(ResourceKind.PRINCIPAL, created_by),
+                    _utc(row.created_at),
+                    PublicId(ResourceKind.PRINCIPAL, updated_by),
+                    _utc(row.updated_at),
+                )
+            )
+        return tuple(values)
+
+    def set_alias(self, value: ArtifactAlias) -> None:
+        artifact_key = self._session.scalar(
+            select(ArtifactRow.id).where(ArtifactRow.public_id == str(value.artifact_id))
+        )
+        version_key = self._session.scalar(
+            select(ArtifactVersionRow.id).where(
+                ArtifactVersionRow.public_id == str(value.artifact_version_id)
+            )
+        )
+        creator_key = self._principal_key(value.created_by)
+        updater_key = self._principal_key(value.updated_by)
+        if (
+            artifact_key is None
+            or version_key is None
+            or creator_key is None
+            or updater_key is None
+        ):
+            raise ValueError("Artifact alias refers to a missing resource")
+        row = self._session.get(ArtifactAliasRow, (artifact_key, value.alias))
+        if row is None:
+            self._session.add(
+                ArtifactAliasRow(
+                    artifact_id=artifact_key,
+                    alias=value.alias,
+                    artifact_version_id=version_key,
+                    created_by=creator_key,
+                    created_at=value.created_at,
+                    updated_by=updater_key,
+                    updated_at=value.updated_at,
+                )
+            )
+        else:
+            row.artifact_version_id = version_key
+            row.updated_by = updater_key
+            row.updated_at = value.updated_at
+
+    def delete_alias(self, artifact_id: PublicId, alias: str) -> bool:
+        artifact_key = self._session.scalar(
+            select(ArtifactRow.id).where(ArtifactRow.public_id == str(artifact_id))
+        )
+        if artifact_key is None:
+            return False
+        row = self._session.get(ArtifactAliasRow, (artifact_key, alias))
+        if row is None:
+            return False
+        self._session.delete(row)
+        return True
 
     def archive_artifact(self, artifact_id: PublicId, at: datetime) -> None:
         row = self._session.scalar(
@@ -2969,6 +3115,15 @@ class SqlAlchemyArtifactCatalogUnitOfWork(SqlAlchemyRepositoryUnitOfWork):
             .join(ResearchProjectRow, ResearchProjectRow.id == row.owning_project_id)
             .where(ArtifactVersionRow.id == row.id)
         ).one()
+        producing_run_public_id = (
+            self._session.scalar(
+                select(RunRow.public_id).where(RunRow.id == row.producing_run_id)
+            )
+            if row.producing_run_id is not None
+            else None
+        )
+        if row.producing_run_id is not None and producing_run_public_id is None:
+            raise RuntimeError("Artifact Version producing Run does not exist")
         return ArtifactVersion(
             PublicId(ResourceKind.ARTIFACT_VERSION, row.public_id),
             PublicId(ResourceKind.ARTIFACT, artifact_id),
@@ -2984,6 +3139,13 @@ class SqlAlchemyArtifactCatalogUnitOfWork(SqlAlchemyRepositoryUnitOfWork):
             AvailabilityState(row.availability),
             row.published_at,
             _utc(row.archived_at) if row.archived_at is not None else None,
+            row.sequence,
+            row.mlflow_model_id,
+            (
+                PublicId(ResourceKind.RUN, producing_run_public_id)
+                if producing_run_public_id is not None
+                else None
+            ),
         )
 
 
@@ -3922,12 +4084,24 @@ class SqlAlchemyPublicationWorkStore(SqlAlchemyPublicationUnitOfWork):
             select(ArtifactRow).where(
                 ArtifactRow.public_id == str(validated.artifact_id),
                 ArtifactRow.owning_project_id == row.project_id,
-            )
+            ).with_for_update()
         )
         if artifact_row is None:
             raise ValueError("validated Artifact does not belong to the publication project")
         version = artifact_version_from_validation(operation, validated, now)
         version_key = uuid4()
+        sequence = (
+            self._session.scalar(
+                select(func.max(ArtifactVersionRow.sequence)).where(
+                    ArtifactVersionRow.artifact_id == artifact_row.id
+                )
+            )
+            or 0
+        ) + 1
+        model_digest = hashlib.md5(
+            str(version.id).encode(), usedforsecurity=False
+        ).hexdigest()
+        mlflow_model_id = f"m-{model_digest}"
         producing_run_key = None
         if validated.producing_run_id is not None:
             producing_run_key = self._session.scalar(
@@ -3946,6 +4120,8 @@ class SqlAlchemyPublicationWorkStore(SqlAlchemyPublicationUnitOfWork):
                 owning_project_id=row.project_id,
                 publication_operation_id=row.id,
                 producing_run_id=producing_run_key,
+                sequence=sequence,
+                mlflow_model_id=mlflow_model_id,
                 algorithm=version.identity.algorithm,
                 digest=version.identity.digest,
                 output_kind=version.identity.kind.value,
@@ -4009,7 +4185,19 @@ class SqlAlchemyPublicationWorkStore(SqlAlchemyPublicationUnitOfWork):
         )
         self._audit_terminal(row, now, "success", {"artifact_version_id": str(version.id)})
         self._session.commit()
-        return version
+        return ArtifactVersion(
+            version.id,
+            version.artifact_id,
+            version.owning_project_id,
+            version.identity,
+            version.integrity,
+            version.availability,
+            version.published_at,
+            version.archived_at,
+            sequence,
+            mlflow_model_id,
+            validated.producing_run_id,
+        )
 
     def fail(
         self, operation: PublicationOperation, failure_code: str, now: datetime

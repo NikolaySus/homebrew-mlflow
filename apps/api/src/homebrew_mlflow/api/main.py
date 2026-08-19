@@ -23,6 +23,7 @@ from .artifacts import router as artifacts_router
 from .attachments import router as attachments_router
 from .audit import router as audit_router
 from .auth import router as auth_router
+from .diagnostics import router as diagnostics_router
 from .dvc_credentials import router as dvc_credentials_router
 from .environments import router as environments_router
 from .identity import router as identity_router
@@ -51,7 +52,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="Homebrew MLflow API",
         version="0.1.0",
-        openapi_version="3.1.0",
+        openapi_version="3.2.0",
         docs_url=None,
         redoc_url=None,
     )
@@ -59,6 +60,7 @@ def create_app() -> FastAPI:
     app.include_router(auth_router)
     app.include_router(audit_router)
     app.include_router(dvc_credentials_router)
+    app.include_router(diagnostics_router)
     app.include_router(environments_router)
     app.include_router(identity_router)
     app.include_router(attachments_router)

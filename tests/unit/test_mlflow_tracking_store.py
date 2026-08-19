@@ -148,12 +148,41 @@ def test_tracking_store_searches_browser_workspace(monkeypatch) -> None:  # type
                 "parameters": [{"key": "seed", "value": "42"}],
                 "metrics": [{"key": "loss", "value": 0.25, "timestamp_ms": 2, "step": 1}],
                 "tags": [{"key": "model", "value": "resnet"}],
+                "input_artifact_version_ids": ["av_dataset"],
+                "output_artifact_version_ids": ["av_model"],
             }
         ],
     }
+
+    catalog = {
+        "artifacts": [
+            {
+                "id": "ar_dataset",
+                "name": "training-data",
+                "kind": "dataset",
+                "versions": [
+                    {
+                        "id": "av_dataset",
+                        "algorithm": "md5",
+                        "digest": "a" * 32,
+                    }
+                ],
+                "aliases": [],
+            },
+            {
+                "id": "ar_model",
+                "name": "ranker",
+                "kind": "model",
+                "versions": [
+                    {"id": "av_model", "mlflow_model_id": "m-0123456789abcdef"}
+                ],
+                "aliases": [],
+            },
+        ]
+    }
     monkeypatch.setattr(
         "homebrew_mlflow.mlflow_plugins.tracking_store.requests.get",
-        lambda *_args, **_kwargs: Response(payload),
+        lambda url, **_kwargs: Response(catalog if url.endswith("/catalog") else payload),
     )
     app = Flask(__name__)
     authorization = _token(
@@ -175,3 +204,6 @@ def test_tracking_store_searches_browser_workspace(monkeypatch) -> None:  # type
     assert [item.name for item in experiments] == ["baseline"]
     assert runs[0].data.metrics == {"loss": 0.25}
     assert runs[0].data.params == {"seed": "42"}
+    assert runs[0].inputs.dataset_inputs[0].dataset.name == "training-data"
+    assert runs[0].inputs.dataset_inputs[0].dataset.digest == f"md5:{'a' * 32}"
+    assert runs[0].outputs.model_outputs[0].model_id == "m-0123456789abcdef"

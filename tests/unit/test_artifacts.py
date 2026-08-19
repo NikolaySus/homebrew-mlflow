@@ -4,6 +4,8 @@ import pytest
 import yaml
 from homebrew_mlflow.application import DvcPointer
 from homebrew_mlflow.domain import (
+    Artifact,
+    ArtifactKind,
     ArtifactSharingGrant,
     ArtifactVersion,
     AvailabilityState,
@@ -15,10 +17,28 @@ from homebrew_mlflow.domain import (
     PublicId,
     ResourceKind,
     UnsafeArtifactPath,
+    normalize_artifact_alias,
     normalize_artifact_path,
     normalize_file_index,
     transition_publication,
 )
+
+
+def test_artifact_kind_description_and_alias_rules_are_explicit() -> None:
+    artifact = Artifact.create(
+        PublicId.generate(ResourceKind.PROJECT),
+        "training-data",
+        datetime(2026, 1, 1, tzinfo=UTC),
+        ArtifactKind.DATASET,
+        "  Curated inputs  ",
+    )
+
+    assert artifact.kind is ArtifactKind.DATASET
+    assert artifact.description == "Curated inputs"
+    assert normalize_artifact_alias("candidate_2") == "candidate_2"
+    for reserved in ("latest", "LATEST", "v7", "V10"):
+        with pytest.raises(ValueError, match="reserved"):
+            normalize_artifact_alias(reserved)
 
 
 def test_dvc_identity_is_algorithm_qualified_and_complete() -> None:

@@ -29,11 +29,16 @@ uv run --frozen dvc metrics show
 The Run helper executes its child through the selected uv environment, so the command after `--` stays
 `dvc ...` rather than nesting another `uv run`.
 
+After the exact named DVC experiment revision is resolved, scalar DVC metrics and parameters are copied
+to the managed Run automatically. Values explicitly logged through MLflow take precedence. DVC datasets,
+models, checkpoints, and reports remain immutable Artifact Versions rather than MLflow binary bundles.
+
 The tracked `homebrew-mlflow.toml` selects the default `uv` environment. The CLI captures and resolves
 the exact lock/runtime revision automatically; `.venv` remains local while `uv.lock` is committed.
 
 `uv run --frozen dvc push -r platform` transfers DVC objects but does not publish them. Create an artifact family once
-with `homebrew-mlflow artifact create <name>`. To archive an immutable result,
+with `homebrew-mlflow artifact create <name> --kind dataset|model|checkpoint|report|generic`. Classify the
+family correctly before publication. To archive an immutable result,
 commit and push its Git/DVC metadata, then use `scripts/dvc-publish.sh` or
 `scripts/dvc-publish.ps1` with the selector and artifact name or ID.
 

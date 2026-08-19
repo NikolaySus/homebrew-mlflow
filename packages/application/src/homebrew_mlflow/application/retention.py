@@ -10,6 +10,7 @@ class RetentionDependencies:
     derivatives: int = 0
     active_grants: int = 0
     replicas: int = 0
+    aliases: int = 0
     legal_hold: bool = False
 
     def __post_init__(self) -> None:
@@ -21,6 +22,7 @@ class RetentionDependencies:
                 self.derivatives,
                 self.active_grants,
                 self.replicas,
+                self.aliases,
             )
         ):
             raise ValueError("retention dependency counts cannot be negative")
@@ -38,6 +40,8 @@ class RetentionDependencies:
             values.append("active_grants")
         if self.replicas:
             values.append("replicas")
+        if self.aliases:
+            values.append("aliases")
         if self.legal_hold:
             values.append("legal_hold")
         return tuple(values)

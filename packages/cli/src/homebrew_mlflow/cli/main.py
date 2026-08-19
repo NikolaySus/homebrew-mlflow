@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 import secrets
@@ -43,6 +44,8 @@ publication_app = typer.Typer(no_args_is_help=True)
 app.add_typer(publication_app, name="publication")
 artifact_app = typer.Typer(no_args_is_help=True)
 app.add_typer(artifact_app, name="artifact")
+artifact_alias_app = typer.Typer(no_args_is_help=True)
+artifact_app.add_typer(artifact_alias_app, name="alias")
 project_app = typer.Typer(no_args_is_help=True)
 app.add_typer(project_app, name="project")
 repository_app = typer.Typer(no_args_is_help=True)
@@ -791,6 +794,165 @@ def _runtime_mlflow_diagnostic_command(root: Path, kind: str, name: str) -> list
     raise RuntimeError("container environments require an explicit MLflow diagnostic command")
 
 
+def _runtime_dvc_capture_command(
+    root: Path, kind: str, name: str, base_revision: str
+) -> list[str]:
+    arguments = [
+        "dvc",
+        "exp",
+        "show",
+        "--rev",
+        base_revision,
+        "--json",
+        "--no-pager",
+    ]
+    if kind == "uv":
+        if shutil.which("uv") is None:
+            raise RuntimeError("uv is required by the selected environment")
+        return ["uv", "run", "--frozen", "--", *arguments]
+    if kind == "pip":
+        candidates = (
+            root / ".venv" / "Scripts" / "dvc.exe",
+            root / ".venv" / "bin" / "dvc",
+        )
+        executable = next((path for path in candidates if path.is_file()), None)
+        if executable is None:
+            raise RuntimeError("DVC is unavailable in the repository .venv")
+        return [str(executable), *arguments[1:]]
+    if kind == "conda":
+        return ["conda", "run", "-n", name, "--no-capture-output", *arguments]
+    if kind == "system":
+        return arguments
+    raise RuntimeError("automatic DVC tracking capture is unavailable for container environments")
+
+
+def _find_dvc_experiment(value: Any, revision: str) -> dict[str, Any] | None:
+    if isinstance(value, dict):
+        data = value.get("data")
+        if value.get("rev") == revision and isinstance(data, dict):
+            return cast(dict[str, Any], data)
+        for child in value.values():
+            match = _find_dvc_experiment(child, revision)
+            if match is not None:
+                return match
+    elif isinstance(value, list):
+        for child in value:
+            match = _find_dvc_experiment(child, revision)
+            if match is not None:
+                return match
+    return None
+
+
+def _flatten_dvc_values(value: Any, prefix: str = "") -> list[tuple[str, Any]]:
+    if isinstance(value, dict):
+        flattened: list[tuple[str, Any]] = []
+        for key in sorted(value):
+            path = f"{prefix}.{key}" if prefix else str(key)
+            flattened.extend(_flatten_dvc_values(value[key], path))
+        return flattened
+    return [(prefix, value)] if prefix else []
+
+
+def _dvc_tracking_values(
+    files: Any, *, metrics: bool
+) -> tuple[list[dict[str, Any]], list[str]]:
+    if not isinstance(files, dict):
+        return [], ["DVC returned malformed tracking data"]
+    candidates: list[tuple[str, str, Any]] = []
+    warnings: list[str] = []
+    for path, result in sorted(files.items()):
+        if not isinstance(path, str) or not isinstance(result, dict):
+            warnings.append("DVC returned a malformed tracking file entry")
+            continue
+        if result.get("error"):
+            warnings.append(f"DVC could not read {path}")
+            continue
+        for key, value in _flatten_dvc_values(result.get("data")):
+            candidates.append((path.replace("\\", "/"), key, value))
+    counts: dict[str, int] = {}
+    for _, key, _ in candidates:
+        counts[key] = counts.get(key, 0) + 1
+    values: list[dict[str, Any]] = []
+    for path, key, value in candidates:
+        normalized_key = key if counts[key] == 1 else f"{path}:{key}"
+        if len(normalized_key) > 250 or normalized_key.startswith("homebrew."):
+            warnings.append(f"Skipped invalid tracking key from {path}")
+            continue
+        if metrics:
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                continue
+            numeric = float(value)
+            if not math.isfinite(numeric):
+                warnings.append(f"Skipped non-finite metric {normalized_key}")
+                continue
+            values.append({"key": normalized_key, "value": numeric})
+        elif isinstance(value, (str, int, float, bool)):
+            rendered = value if isinstance(value, str) else json.dumps(value)
+            if len(rendered) > 6000:
+                warnings.append(f"Skipped oversized parameter {normalized_key}")
+                continue
+            values.append({"key": normalized_key, "value": rendered})
+    return values[:1000], warnings
+
+
+def _capture_dvc_tracking(
+    root: Path,
+    selection_kind: str,
+    selection_name: str,
+    base_revision: str,
+    experiment_revision: str,
+    server: str,
+    run_id: str,
+    run_token: str,
+) -> dict[str, Any]:
+    command = _runtime_dvc_capture_command(
+        root, selection_kind, selection_name, base_revision
+    )
+    completed = subprocess.run(
+        command, cwd=root, check=False, capture_output=True, text=True
+    )
+    if completed.returncode != 0:
+        raise RuntimeError("DVC experiment tracking capture failed")
+    experiment = _find_dvc_experiment(json.loads(completed.stdout), experiment_revision)
+    if experiment is None:
+        raise RuntimeError("resolved DVC experiment was absent from tracking capture")
+    metrics, metric_warnings = _dvc_tracking_values(
+        experiment.get("metrics"), metrics=True
+    )
+    parameters, parameter_warnings = _dvc_tracking_values(
+        experiment.get("params"), metrics=False
+    )
+    headers = {"Authorization": f"Bearer {run_token}"}
+    with httpx.Client(timeout=30) as client:
+        current_response = client.get(
+            f"{server}/api/v1/runs/{run_id}/tracking", headers=headers
+        )
+        current_response.raise_for_status()
+        current = current_response.json()
+        explicit_metrics = {item["key"] for item in current.get("metrics", [])}
+        explicit_parameters = {item["key"] for item in current.get("parameters", [])}
+        metrics = [item for item in metrics if item["key"] not in explicit_metrics]
+        parameters = [
+            item for item in parameters if item["key"] not in explicit_parameters
+        ]
+        timestamp_ms = int(time.time() * 1000)
+        for metric in metrics:
+            metric.update({"timestamp_ms": timestamp_ms, "step": 0})
+        if metrics or parameters:
+            response = client.post(
+                f"{server}/api/v1/runs/{run_id}/tracking/batch",
+                headers=headers,
+                json={"metrics": metrics, "parameters": parameters, "tags": []},
+            )
+            response.raise_for_status()
+    return {
+        "status": "captured",
+        "metrics_imported": len(metrics),
+        "parameters_imported": len(parameters),
+        "warnings": (metric_warnings + parameter_warnings)[:20],
+    }
+
+
 def _probe_dvc_remote(configuration: DvcConfiguration) -> None:
     parsed = urlsplit(configuration.remote_url)
     if parsed.scheme != "s3" or not parsed.netloc or not parsed.path.strip("/"):
@@ -925,7 +1087,9 @@ def doctor(
         )
         configuration_response.raise_for_status()
         canonical = DvcConfiguration.from_payload(configuration_response.json())
-        mlflow_response = client.get(f"{normalized}/mlflow/health")
+        mlflow_response = client.get(
+            f"{normalized}/api/v1/diagnostics/mlflow", headers=headers
+        )
         result(
             "mlflow_service",
             mlflow_response.is_success,
@@ -1149,7 +1313,13 @@ def artifact_pointer(
 
 
 @artifact_app.command("create")
-def artifact_create(name: Annotated[str, typer.Argument(help="Artifact family name")]) -> None:
+def artifact_create(
+    name: Annotated[str, typer.Argument(help="Artifact family name")],
+    kind: Annotated[
+        str, typer.Option(help="dataset, model, checkpoint, report, or generic")
+    ] = "generic",
+    description: Annotated[str | None, typer.Option()] = None,
+) -> None:
     """Create an explicit, reusable artifact family in the current project."""
     repository = _repository_context()
     server = repository["server"].rstrip("/")
@@ -1158,7 +1328,7 @@ def artifact_create(name: Annotated[str, typer.Argument(help="Artifact family na
         response = client.post(
             f"{server}/api/v1/projects/{repository['project_id']}/artifacts",
             headers=headers,
-            json={"name": name},
+            json={"name": name, "kind": kind, "description": description},
         )
         response.raise_for_status()
     artifact = response.json()
@@ -1177,7 +1347,7 @@ def artifact_list() -> None:
         )
         response.raise_for_status()
     for artifact in response.json():
-        typer.echo(f"{artifact['id']}\t{artifact['name']}")
+        typer.echo(f"{artifact['id']}\t{artifact['kind']}\t{artifact['name']}")
 
 
 def _resolve_artifact(
@@ -1195,6 +1365,90 @@ def _resolve_artifact(
             f"artifact {reference!r} was not found or is ambiguous; create it explicitly first"
         )
     return str(matches[0]["id"])
+
+
+@artifact_app.command("classify")
+def artifact_classify(
+    artifact: Annotated[str, typer.Argument(help="Artifact family ID or name")],
+    kind: Annotated[str, typer.Option(help="New Artifact kind")],
+    description: Annotated[str | None, typer.Option()] = None,
+) -> None:
+    """Set Maintainer-managed Artifact catalog metadata."""
+    repository = _repository_context()
+    server = repository["server"].rstrip("/")
+    with httpx.Client(timeout=15) as client:
+        headers = _project_headers(_refresh_session(client, server))
+        artifact_id = _resolve_artifact(
+            client, server, headers, repository["project_id"], artifact
+        )
+        response = client.patch(
+            f"{server}/api/v1/artifacts/{artifact_id}",
+            headers=headers,
+            json={"kind": kind, "description": description},
+        )
+        response.raise_for_status()
+    value = response.json()
+    typer.echo(f"{value['id']}\t{value['kind']}\t{value['name']}")
+
+
+def _artifact_alias_context(reference: str) -> tuple[str, str, dict[str, str]]:
+    repository = _repository_context()
+    server = repository["server"].rstrip("/")
+    with httpx.Client(timeout=15) as client:
+        headers = _project_headers(_refresh_session(client, server))
+        artifact_id = _resolve_artifact(
+            client, server, headers, repository["project_id"], reference
+        )
+    return server, artifact_id, headers
+
+
+@artifact_alias_app.command("list")
+def artifact_alias_list(
+    artifact: Annotated[str, typer.Argument(help="Artifact family ID or name")],
+) -> None:
+    """List mutable labels and their exact immutable targets."""
+    server, artifact_id, headers = _artifact_alias_context(artifact)
+    with httpx.Client(timeout=15) as client:
+        response = client.get(
+            f"{server}/api/v1/artifacts/{artifact_id}/aliases", headers=headers
+        )
+        response.raise_for_status()
+    for value in response.json():
+        typer.echo(f"{value['alias']}\t{value['artifact_version_id']}")
+
+
+@artifact_alias_app.command("set")
+def artifact_alias_set(
+    artifact: Annotated[str, typer.Argument(help="Artifact family ID or name")],
+    alias: Annotated[str, typer.Argument()],
+    version: Annotated[str, typer.Argument(help="Exact Artifact Version ID")],
+) -> None:
+    """Create or atomically move an audited Artifact alias."""
+    server, artifact_id, headers = _artifact_alias_context(artifact)
+    with httpx.Client(timeout=15) as client:
+        response = client.put(
+            f"{server}/api/v1/artifacts/{artifact_id}/aliases/{alias}",
+            headers=headers,
+            json={"artifact_version_id": version},
+        )
+        response.raise_for_status()
+    value = response.json()
+    typer.echo(f"{value['alias']}\t{value['artifact_version_id']}")
+
+
+@artifact_alias_app.command("delete")
+def artifact_alias_delete(
+    artifact: Annotated[str, typer.Argument(help="Artifact family ID or name")],
+    alias: Annotated[str, typer.Argument()],
+) -> None:
+    """Delete an audited Artifact alias."""
+    server, artifact_id, headers = _artifact_alias_context(artifact)
+    with httpx.Client(timeout=15) as client:
+        response = client.delete(
+            f"{server}/api/v1/artifacts/{artifact_id}/aliases/{alias}", headers=headers
+        )
+        response.raise_for_status()
+    typer.echo(f"Deleted alias {alias}.")
 
 
 @publication_app.command("submit")
@@ -1431,7 +1685,6 @@ def run(
         heartbeat_thread.join(timeout=20)
         if token_path.exists():
             finalization_token = token_path.read_text(encoding="utf-8").strip()
-        token_path.unlink(missing_ok=True)
 
     provenance_problems: list[str] = []
     provenance_status = "complete"
@@ -1462,6 +1715,36 @@ def run(
         provenance_problems.extend(experiment_problems)
     except RuntimeError as error:
         provenance_problems.append(str(error))
+
+    dvc_tracking_capture: dict[str, Any] = {
+        "status": "skipped",
+        "reason": "no_exact_experiment_revision",
+    }
+    try:
+        if dvc_experiment_revision is not None:
+            dvc_tracking_capture = _capture_dvc_tracking(
+                root,
+                selection.kind,
+                selection.name,
+                commit_sha,
+                dvc_experiment_revision,
+                server,
+                run_id,
+                finalization_token,
+            )
+            for warning in dvc_tracking_capture.get("warnings", []):
+                typer.echo(f"Warning: {warning}", err=True)
+    except (RuntimeError, OSError, ValueError, json.JSONDecodeError, httpx.HTTPError) as error:
+        dvc_tracking_capture = {
+            "status": "warning",
+            "error": _safe_error(error),
+        }
+        typer.echo(
+            f"Warning: automatic DVC tracking capture was skipped ({_safe_error(error)}).",
+            err=True,
+        )
+    finally:
+        token_path.unlink(missing_ok=True)
 
     try:
         workspace_status = _git_output("status", "--porcelain", root=root).splitlines()
@@ -1495,6 +1778,7 @@ def run(
                     "heartbeat_error_count": len(heartbeat_error),
                     "client_version": __version__,
                     "input_artifact_version_ids": input_version or [],
+                    "dvc_tracking_capture": dvc_tracking_capture,
                     "secret_context": secret_context,
                     "environment": {
                         "kind": selection.kind,

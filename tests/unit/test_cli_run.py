@@ -118,6 +118,15 @@ def test_run_preserves_child_success_with_workspace_changes(  # type: ignore[no-
         ),
     )
     monkeypatch.setattr("homebrew_mlflow.cli.main._git_blob_evidence", lambda *_args: None)
+    monkeypatch.setattr(
+        "homebrew_mlflow.cli.main._capture_dvc_tracking",
+        lambda *_args, **_kwargs: {
+            "status": "captured",
+            "metrics_imported": 0,
+            "parameters_imported": 0,
+            "warnings": [],
+        },
+    )
     executed: list[list[str]] = []
 
     def fake_run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:

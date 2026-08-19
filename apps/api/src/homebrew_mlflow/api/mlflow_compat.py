@@ -6,6 +6,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException
 from homebrew_mlflow.application import (
     AccessTokenClaims,
+    ArtifactCatalogService,
     ProjectService,
     RunService,
     TrackingService,
@@ -18,6 +19,7 @@ from homebrew_mlflow.domain import (
     ResourceKind,
 )
 from homebrew_mlflow.infrastructure import (
+    SqlAlchemyArtifactCatalogUnitOfWork,
     SqlAlchemyProjectUnitOfWork,
     SqlAlchemyRunUnitOfWork,
     SqlAlchemyTrackingUnitOfWork,
@@ -79,6 +81,49 @@ class MlflowRunResponse(BaseModel):
     parameters: list[ParameterInput]
     metrics: list[MetricInput]
     tags: list[TagInput]
+    input_artifact_version_ids: list[str]
+    output_artifact_version_ids: list[str]
+
+
+class MlflowArtifactAliasResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    alias: str
+    artifact_version_id: str
+
+
+class MlflowArtifactVersionResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    artifact_id: str
+    sequence: int
+    mlflow_model_id: str
+    algorithm: str
+    digest: str
+    output_kind: str
+    size: int
+    file_count: int
+    published_at: datetime
+    producing_run_id: str | None
+
+
+class MlflowArtifactResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    name: str
+    kind: str
+    description: str | None
+    created_at: datetime
+    versions: list[MlflowArtifactVersionResponse]
+    aliases: list[MlflowArtifactAliasResponse]
+
+
+class MlflowCatalogResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    artifacts: list[MlflowArtifactResponse]
 
 
 class MlflowProjectSnapshotResponse(BaseModel):
@@ -145,6 +190,9 @@ def project_snapshot(
         )
         tracking = TrackingService(SqlAlchemyTrackingUnitOfWork(session))
         snapshots = tracking.project_snapshots(claims.principal_id, project_id)
+        provenance = {
+            run.id: run_service.provenance(claims.principal_id, run.id) for run in runs
+        }
     last_updates = {experiment.id: experiment.created_at for experiment in experiments}
     for run in runs:
         candidate = run.ended_at or run.heartbeat_at or run.started_at or run.created_at
@@ -185,7 +233,72 @@ def project_snapshot(
                     for item in snapshot.metrics
                 ],
                 tags=[TagInput(key=item.key, value=item.value) for item in snapshot.tags],
+                input_artifact_version_ids=[
+                    str(value)
+                    for value in provenance[snapshot.run.id].input_artifact_version_ids
+                ],
+                output_artifact_version_ids=[
+                    str(value)
+                    for value in provenance[snapshot.run.id].output_artifact_version_ids
+                ],
             )
             for snapshot in snapshots
         ],
     )
+
+
+@router.get(
+    "/workspaces/{workspace}/catalog",
+    response_model=MlflowCatalogResponse,
+)
+def project_catalog(
+    workspace: str,
+    claims: Annotated[AccessTokenClaims, Depends(mlflow_read_claims)],
+) -> MlflowCatalogResponse:
+    project_id = workspace_project(workspace)
+    if claims.project_id != project_id:
+        raise HTTPException(status_code=403, detail="workspace_scope_mismatch")
+    with create_session(get_settings().database_url) as session:
+        service = ArtifactCatalogService(SqlAlchemyArtifactCatalogUnitOfWork(session))
+        artifacts = service.list_artifacts(claims.principal_id, project_id)
+        response: list[MlflowArtifactResponse] = []
+        for artifact in artifacts:
+            versions = service.list_versions(claims.principal_id, artifact.id)
+            aliases = service.list_aliases(claims.principal_id, artifact.id)
+            response.append(
+                MlflowArtifactResponse(
+                    id=str(artifact.id),
+                    name=artifact.name,
+                    kind=artifact.kind.value,
+                    description=artifact.description,
+                    created_at=artifact.created_at,
+                    versions=[
+                        MlflowArtifactVersionResponse(
+                            id=str(version.id),
+                            artifact_id=str(version.artifact_id),
+                            sequence=version.sequence,
+                            mlflow_model_id=version.mlflow_model_id,
+                            algorithm=version.identity.algorithm,
+                            digest=version.identity.digest,
+                            output_kind=version.identity.kind.value,
+                            size=version.identity.size,
+                            file_count=version.identity.file_count,
+                            published_at=version.published_at,
+                            producing_run_id=(
+                                str(version.producing_run_id)
+                                if version.producing_run_id is not None
+                                else None
+                            ),
+                        )
+                        for version in versions
+                    ],
+                    aliases=[
+                        MlflowArtifactAliasResponse(
+                            alias=value.alias,
+                            artifact_version_id=str(value.artifact_version_id),
+                        )
+                        for value in aliases
+                    ],
+                )
+            )
+    return MlflowCatalogResponse(artifacts=response)

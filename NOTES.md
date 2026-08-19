@@ -5,15 +5,42 @@ User command mistakes and problems caused solely by an outdated local CLI are in
 
 ## 2026-08-19
 
+### Publication worker fails after complete object validation
+
+**State:** Resolved by platform commit `13a29dc` and worker redeployment.
+
+Publication operation `pub_01M0D6D48V2M0WJZNVAG3GM3EC` resolved the committed top-five submission,
+verified its complete 6,637,542-byte DVC object, entered `operation.committing`, and then failed with the
+safe `worker_failed` code. PostgreSQL recorded a foreign-key violation because the worker attempted to
+insert `artifact_storage_locations` before SQLAlchemy had flushed the parent `artifact_versions` row.
+
+The finalizer now flushes the immutable Artifact Version before inserting its file-index and storage child
+rows. A foreign-key-enforced integration regression test and the publication-focused suite pass. Both VPS
+publication workers were rebuilt and recreated. Retry operation `pub_01M0D6TSXPJ7H8NTHVCJRXG5RB`
+published successfully, followed by a complete catalog synchronization: 62 published Artifact Versions
+across 10 families, with no partial version from the failed operation.
+
+### Doctor reports MLflow authorization boundary failure
+
+**State:** Open; does not block Git, DVC, managed CLI authentication, or publication.
+
+After the publication-worker repair, repeated `homebrew-mlflow doctor` checks report
+`mlflow_service=failed status=401` and `mlflow_auth_boundary=failed`, while `platform_session`,
+`mlflow_client_auth`, `dvc_remote`, and publication remain functional. Expected: the readiness probe should
+receive the accepted MLflow service response and report `readiness=ok`. This should be diagnosed separately
+from the successfully repaired publication transaction.
+
 ### Managed Run finalization can fail after a successful DVC experiment
 
-**State:** Open in CLI 0.2.5.
+**State:** Resolved in CLI 0.2.6.
 
 Run `run_01M0C7RWTXKGB3ZJ04Z7WK1Y0K` completed the unchanged CUDA CatBoost training plus diagnostic
 outputs, and DVC created named experiment revision `ab7f7531f783a2cde30a7b5e02a418d03dfa95bd` with hashes
-for all seven declared outputs. The wrapper then warned that none of those hashes could be found in the
-workspace and failed with HTTP 404 from `/api/v1/runs/run_01M0C7RWTXKGB3ZJ04Z7WK1Y0K/finalize`. The command
-therefore returned exit code one even though the DVC revision and all local cache objects remained intact.
+for all seven declared outputs. DVC separately emitted post-executor missing-file/hash warnings, which are
+not evidence of incomplete platform provenance. The client then failed with HTTP 404 from
+`/api/v1/runs/run_01M0C7RWTXKGB3ZJ04Z7WK1Y0K/finalize`; that failed API request, rather than the DVC warning,
+is the issue recorded here. The command returned exit code one even though the DVC revision and all local
+cache objects remained intact.
 
 Expected: the finalize endpoint should accept an existing active Run, resolve provenance from the completed
 named DVC experiment revision, and return a durable succeeded or failed response. A missing Run should be
@@ -22,24 +49,43 @@ completed experiment association.
 
 Reproduction: Run `run_01M0CBRRCHZ64BD0ZNR2DDK3AH` completed a 49-minute hurdle CatBoost stage and DVC
 created revision `ec21bfba0195632f3b530c0930ee7c8466cd823a` with all seven output hashes. Finalization again
-reported every output hash missing from the workspace, then failed during its API request with
-`ConnectError: [Errno 11001] getaddrinfo failed`. Two pre-run `doctor` attempts had also timed out before a
-third reported `readiness=ok`. The completed DVC state survived, but the wrapper has no retry or resumable
-finalization path for transient control-plane failures after expensive local work.
+followed DVC's independent post-executor warnings, then failed during its API request with `ConnectError:
+[Errno 11001] getaddrinfo failed`. Two pre-run `doctor` attempts had also timed out before a third reported
+`readiness=ok`. The completed DVC state survived, but the client has no retry or resumable finalization path
+for transient control-plane failures after expensive local work. No claim is made that the DVC warnings
+caused the API failure or imply incorrect stored provenance.
 
-### Temporary DVC experiments lose output hashes during Run finalization
+CLI 0.2.6 adds Run-token heartbeats resilient to transient DNS, connection, timeout, 429, and server errors;
+approximately two minutes of idempotent finalization retries; and a credential-free local finalization
+journal written before the network request. If retries are exhausted, `homebrew-mlflow run-recover <RUN_ID>`
+can finalize the already-computed worker-marked `INCOMPLETE` Run after connectivity returns, without
+reopening the Run or rerunning computation. Recovery is limited to the Run creator or a project Maintainer.
+The historical CLI 0.2.5 failures have no recovery journals and cannot verify this fix retroactively.
 
-**State:** Open in CLI 0.2.5.
+Local readiness check: CLI 0.2.6 is installed and recommended, and `homebrew-mlflow doctor` reports
+`readiness=ok`. The resolution criterion was a new managed Run that either finalized normally through the
+new path or was successfully finalized with `run-recover` after a reproduced connectivity interruption.
+
+Verification: new Run `run_01M0CK007TJZX9AAXTS287EW6W` executed a cheap clean-state command under CLI
+0.2.6 and finalized normally as `succeeded`. Journal-based `run-recover` remains intentionally untested
+because this verification did not reproduce a connectivity interruption.
+
+### DVC `--temp` emits missing-file/hash warnings after executor cleanup
+
+**State:** Non-critical upstream DVC UX observation; not a demonstrated platform defect.
 
 Successful managed Runs that execute `dvc exp run --temp` create complete named DVC experiment revisions,
-but finalization warns that every declared output lacks file hash information. The warning paths point into
-the already-removed `.dvc/tmp/exps/standalone/...` checkout rather than resolving hashes from the new DVC
-experiment revision. This reproduced for base Run `run_01M0BNSS0M3YH5KRBERT6WV566`, global Run
+but DVC later warns that declared outputs cannot be found at paths under the already-removed
+`.dvc/tmp/exps/standalone/...` executor checkout. This reproduced for base Run
+`run_01M0BNSS0M3YH5KRBERT6WV566`, global Run
 `run_01M0BNT8W6V5DRG668BJ8KA1ND`, and correlation Run `run_01M0BQADP4R40BXVG0XMDC7SK1`.
 
-Expected: finalization should resolve output hashes from the recorded DVC experiment revision, including
-temporary experiments whose executor checkout is removed before the wrapper captures provenance. A
-successful temporary Run should not depend on the former executor path remaining materialized.
+Platform verification: all three Runs finalized successfully with `provenance_status=complete`, their exact
+DVC revisions, committed `dvc.lock` evidence, and declared output paths. The platform reads `dvc.lock` from
+the exact experiment revision with Git and does not derive provenance from the temporary executor checkout.
+Therefore the warnings are retained only as noisy upstream DVC behavior. Reclassify this as a platform bug
+only if a finalized Run can be shown to contain a missing or incorrect revision, lockfile, output path, or
+publication identity; suppressing DVC warnings alone is not a platform fix.
 
 ### Repository v4 to v5 migration cannot match the generated lockfile
 
@@ -65,18 +111,18 @@ matching both managed `uv.lock` fragments. An isolated in-memory migration using
 `https://ml.spkya.ru` v4 package block and requirement upgraded the package version, wheel URL, wheel hash,
 and locked requirement successfully. The live v5 repository continues to report `readiness=ok`.
 
-### Successful Run warns that all declared DVC outputs lack hashes
+### Successful Runs can also emit DVC missing-output warnings
 
-**State:** Resolved in CLI 0.2.4.
+**State:** Historical non-critical DVC UX observation; no platform provenance defect demonstrated.
 
 Run `run_01M0BC5MBAN7F91E88Q3VBXZKS` completed its DVC experiment, updated `dvc.lock`, and finalized as
 succeeded. Immediately afterward, the wrapper warned that no file hash information was found for each of
 the four declared outputs. The files exist, `dvc status` reports the pipeline up to date, and DVC experiment
 revision `cb9b7433d815b2a6830ecda135b36cffccde021a` contains their hashes and metrics.
 
-Expected: a successful Run should resolve output hashes from the resulting DVC experiment without emitting
-missing-hash warnings. If provenance capture is incomplete, finalization should say exactly which Run fields
-are unavailable instead of reporting unconditional success.
+Interpretation: the warning is not evidence that the platform failed to resolve provenance. Platform
+provenance must be assessed from the finalized Run's stored revision, committed `dvc.lock` evidence, output
+paths, and publication identity rather than from whether DVC can revisit an executor workspace path.
 
 Recheck: final Run `run_01M0BCTCZ6YKTCXB3KWTQKBANE` recomputed the same stage and finalized without the
 warnings. A later, otherwise successful Run `run_01M0BE7RMA3X9RKWP4NEQX5CWA` reproduced the warning for
@@ -86,7 +132,9 @@ and both local status and the remote transfer are checked separately.
 Verification: Run `run_01M0BHZ0A0DBH75PWB61GNEEN2` forced the unchanged full DVC stage under CLI 0.2.4,
 created named DVC experiment revision `dca4a7010f6c1d9ce1a07a8227ec1e7000d16125`, and finalized as
 succeeded without any missing-hash warning. All four output hashes were present, `dvc status` reported the
-pipeline up to date, and `dvc status -c -r platform` reported the cache and remote in sync.
+pipeline up to date, and `dvc status -c -r platform` reported the cache and remote in sync. This comparison
+only characterizes warning reproducibility; it does not establish a platform provenance failure in the Runs
+that emitted the warning.
 
 ## 2026-08-18
 

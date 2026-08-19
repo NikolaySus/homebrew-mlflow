@@ -150,6 +150,7 @@ def _seed(
                     owning_project_id=owner_key,
                     publication_operation_id=uuid4(),
                     producing_run_id=None,
+                    sequence=sequence,
                     algorithm="md5",
                     digest=digest * 32,
                     output_kind="file",
@@ -159,9 +160,9 @@ def _seed(
                     availability="available",
                     published_at=NOW,
                 )
-                for key, public_id, digest in (
-                    (source_key, source, "a"),
-                    (derived_key, derived, "b"),
+                for key, public_id, digest, sequence in (
+                    (source_key, source, "a", 1),
+                    (derived_key, derived, "b", 2),
                 )
             ],
             ArtifactSharingGrantRow(

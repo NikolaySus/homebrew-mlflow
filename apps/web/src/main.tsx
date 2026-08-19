@@ -64,7 +64,15 @@ type RunDetail = {
   metrics: Metric[];
   tags: { key: string; value: string }[];
 };
-type Artifact = { id: string; name: string; created_at: string };
+type ArtifactKind = "dataset" | "model" | "checkpoint" | "report" | "generic";
+type Artifact = {
+  id: string;
+  name: string;
+  kind: ArtifactKind;
+  description: string | null;
+  created_at: string;
+};
+type ArtifactAlias = { alias: string; artifact_version_id: string };
 type Version = {
   id: string;
   artifact_id: string;
@@ -77,6 +85,9 @@ type Version = {
   integrity: string;
   availability: string;
   published_at: string;
+  sequence: number;
+  mlflow_model_id: string;
+  producing_run_id: string | null;
 };
 type ArtifactFile = { path: string; size: number; digest: string | null };
 type Lineage = {
@@ -165,6 +176,7 @@ type RetentionDependencies = {
   derivatives: number;
   active_grants: number;
   replicas: number;
+  aliases: number;
   legal_hold: boolean;
 };
 type SharedReference = {
@@ -214,6 +226,8 @@ export function App() {
   const [artifacts, setArtifacts] = useState<Artifact[]>([]);
   const [versions, setVersions] = useState<Version[]>([]);
   const [artifactId, setArtifactId] = useState("");
+  const [artifactKind, setArtifactKind] = useState<ArtifactKind | "all">("all");
+  const [artifactAliases, setArtifactAliases] = useState<ArtifactAlias[]>([]);
   const [version, setVersion] = useState<Version | null>(null);
   const [files, setFiles] = useState<ArtifactFile[]>([]);
   const [lineage, setLineage] = useState<Lineage[]>([]);
@@ -408,8 +422,14 @@ export function App() {
       setVersions([]);
       return;
     }
-    request<Version[]>(`/api/v1/artifacts/${artifactId}/versions`)
-      .then(setVersions)
+    Promise.all([
+      request<Version[]>(`/api/v1/artifacts/${artifactId}/versions`),
+      request<ArtifactAlias[]>(`/api/v1/artifacts/${artifactId}/aliases`),
+    ])
+      .then(([values, aliases]) => {
+        setVersions(values);
+        setArtifactAliases(aliases);
+      })
       .catch(showError);
   }, [artifactId]);
 
@@ -421,6 +441,10 @@ export function App() {
     (binding) => binding.resource_id === organization?.id,
   )?.role;
   const canCreateProject = organizationRole === "admin";
+  const currentMembership = memberships.find(
+    (membership) => membership.principal_id === me?.principal_id,
+  );
+  const canManageArtifacts = currentMembership?.role === "maintainer";
   const experimentNames = useMemo(
     () => new Map(experiments.map((item) => [item.id, item.name])),
     [experiments],
@@ -591,10 +615,64 @@ export function App() {
     try {
       await request(`/api/v1/projects/${projectId}/artifacts`, {
         method: "POST",
-        body: JSON.stringify({ name: data.get("name") }),
+        body: JSON.stringify({
+          name: data.get("name"),
+          kind: data.get("kind"),
+          description: data.get("description") || null,
+        }),
       });
       setArtifacts(await request(`/api/v1/projects/${projectId}/artifacts`));
       event.currentTarget.reset();
+    } catch (value) {
+      showError(value);
+    }
+  }
+
+  async function updateArtifactMetadata(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const selectedArtifact = artifacts.find((item) => item.id === artifactId);
+    if (!selectedArtifact) return;
+    const data = new FormData(event.currentTarget);
+    try {
+      await request(`/api/v1/artifacts/${artifactId}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          kind: data.get("kind"),
+          description: data.get("description") || null,
+        }),
+      });
+      setArtifacts(await request(`/api/v1/projects/${projectId}/artifacts`));
+    } catch (value) {
+      showError(value);
+    }
+  }
+
+  async function setArtifactAlias(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const alias = String(data.get("alias"));
+    try {
+      await request(`/api/v1/artifacts/${artifactId}/aliases/${alias}`, {
+        method: "PUT",
+        body: JSON.stringify({ artifact_version_id: data.get("version") }),
+      });
+      setArtifactAliases(
+        await request(`/api/v1/artifacts/${artifactId}/aliases`),
+      );
+      event.currentTarget.reset();
+    } catch (value) {
+      showError(value);
+    }
+  }
+
+  async function deleteArtifactAlias(alias: string) {
+    try {
+      await request(`/api/v1/artifacts/${artifactId}/aliases/${alias}`, {
+        method: "DELETE",
+      });
+      setArtifactAliases(
+        await request(`/api/v1/artifacts/${artifactId}/aliases`),
+      );
     } catch (value) {
       showError(value);
     }
@@ -1341,11 +1419,29 @@ export function App() {
                   <Title title="Artifact catalog" count={artifacts.length} />
                   <form className="inlineForm" onSubmit={createArtifact}>
                     <input name="name" placeholder="Artifact family name" required />
+                    <select name="kind" defaultValue="generic">
+                      {(["dataset", "model", "checkpoint", "report", "generic"] as ArtifactKind[]).map((kind) => (
+                        <option key={kind}>{kind}</option>
+                      ))}
+                    </select>
+                    <input name="description" placeholder="Description (optional)" />
                     <button>Create artifact family</button>
                   </form>
+                  <label className="field">
+                    Kind
+                    <select
+                      value={artifactKind}
+                      onChange={(event) => setArtifactKind(event.target.value as ArtifactKind | "all")}
+                    >
+                      <option value="all">all</option>
+                      {(["dataset", "model", "checkpoint", "report", "generic"] as ArtifactKind[]).map((kind) => (
+                        <option key={kind}>{kind}</option>
+                      ))}
+                    </select>
+                  </label>
                   <div className="artifactLayout">
                     <div className="artifactList">
-                      {artifacts.map((artifact) => (
+                      {artifacts.filter((artifact) => artifactKind === "all" || artifact.kind === artifactKind).map((artifact) => (
                         <button
                           key={artifact.id}
                           className={
@@ -1359,6 +1455,8 @@ export function App() {
                           }}
                         >
                           <strong>{artifact.name}</strong>
+                          <span className="state">{artifact.kind}</span>
+                          {artifact.description && <small>{artifact.description}</small>}
                           <code>{artifact.id}</code>
                         </button>
                       ))}
@@ -1371,7 +1469,7 @@ export function App() {
                           onClick={() => chooseVersion(value)}
                         >
                           <div>
-                            <strong>{value.id}</strong>
+                            <strong>Version {value.sequence}</strong>
                             <span className="verified">{value.integrity}</span>
                           </div>
                           <code>
@@ -1386,6 +1484,41 @@ export function App() {
                       ))}
                     </div>
                   </div>
+                  {artifactId && canManageArtifacts && (
+                    <div className="artifactControls">
+                      <form className="inlineForm" onSubmit={updateArtifactMetadata}>
+                        <select name="kind" defaultValue={artifacts.find((item) => item.id === artifactId)?.kind}>
+                          {(["dataset", "model", "checkpoint", "report", "generic"] as ArtifactKind[]).map((kind) => (
+                            <option key={kind}>{kind}</option>
+                          ))}
+                        </select>
+                        <input
+                          name="description"
+                          defaultValue={artifacts.find((item) => item.id === artifactId)?.description ?? ""}
+                          placeholder="Description"
+                        />
+                        <button>Update metadata</button>
+                      </form>
+                      <form className="inlineForm" onSubmit={setArtifactAlias}>
+                        <input name="alias" placeholder="Alias, e.g. champion" required />
+                        <select name="version" required defaultValue="">
+                          <option value="" disabled>Target version</option>
+                          {versions.map((value) => (
+                            <option key={value.id} value={value.id}>Version {value.sequence}</option>
+                          ))}
+                        </select>
+                        <button>Set alias</button>
+                      </form>
+                      <div className="aliasList">
+                        {artifactAliases.map((value) => (
+                          <span key={value.alias}>
+                            <strong>{value.alias}</strong> → <code>{value.artifact_version_id}</code>{" "}
+                            <button className="linkButton" onClick={() => deleteArtifactAlias(value.alias)}>delete</button>
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   {version && (
                     <VersionInspector
                       version={version}

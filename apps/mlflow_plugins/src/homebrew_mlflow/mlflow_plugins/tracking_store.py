@@ -1,11 +1,28 @@
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Sequence
 from typing import Any, cast
 
 import requests
-from mlflow.entities import Experiment, Metric, Param, Run, RunData, RunInfo, RunTag, ViewType
+from mlflow.entities import (
+    Dataset,
+    DatasetInput,
+    Experiment,
+    InputTag,
+    LoggedModel,
+    LoggedModelOutput,
+    Metric,
+    Param,
+    Run,
+    RunData,
+    RunInfo,
+    RunInputs,
+    RunOutputs,
+    RunTag,
+    ViewType,
+)
 from mlflow.exceptions import MlflowException
 from mlflow.protos.databricks_pb2 import (
     CUSTOMER_UNAUTHORIZED,
@@ -15,7 +32,11 @@ from mlflow.protos.databricks_pb2 import (
 )
 from mlflow.store.entities.paged_list import PagedList
 from mlflow.store.tracking.abstract_store import AbstractStore
-from mlflow.utils.search_utils import SearchExperimentsUtils, SearchUtils
+from mlflow.utils.search_utils import (
+    SearchExperimentsUtils,
+    SearchLoggedModelsUtils,
+    SearchUtils,
+)
 from mlflow.utils.workspace_context import get_request_workspace
 
 from .auth_context import authorization_header, token_claims
@@ -85,6 +106,22 @@ class HomebrewTrackingStore(AbstractStore):
             raise _platform_error(response)
         return cast(dict[str, Any], response.json())
 
+    def _read_catalog(self) -> dict[str, Any]:
+        workspace = get_request_workspace()
+        if not workspace:
+            project_id = token_claims().get("prj")
+            if not isinstance(project_id, str):
+                raise MlflowException.invalid_parameter_value("active workspace is required")
+            workspace = project_id.replace("pr_", "pr-", 1).lower()
+        response = requests.get(
+            f"{self._base_url}/api/v1/mlflow/workspaces/{workspace}/catalog",
+            headers=self._headers(),
+            timeout=30,
+        )
+        if not getattr(response, "ok", True):
+            raise _platform_error(response)
+        return cast(dict[str, Any], response.json())
+
     @staticmethod
     def _read_token() -> bool:
         try:
@@ -143,9 +180,11 @@ class HomebrewTrackingStore(AbstractStore):
                 )
         else:
             payload = self._get(run_id)
-        return self._run_entity(payload)
+        return self._run_entity(payload, self._read_catalog() if self._read_token() else None)
 
-    def _run_entity(self, payload: dict[str, Any]) -> Run:
+    def _run_entity(
+        self, payload: dict[str, Any], catalog: dict[str, Any] | None = None
+    ) -> Run:
         metrics: dict[str, Metric] = {}
         for item in payload["metrics"]:
             candidate = Metric(item["key"], item["value"], item["timestamp_ms"], item["step"])
@@ -155,6 +194,43 @@ class HomebrewTrackingStore(AbstractStore):
                 previous.timestamp,
             ):
                 metrics[candidate.key] = candidate
+        datasets: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {}
+        models: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {}
+        for artifact in (catalog or {}).get("artifacts", []):
+            target = datasets if artifact.get("kind") == "dataset" else models
+            if artifact.get("kind") not in {"dataset", "model"}:
+                continue
+            for version in artifact.get("versions", []):
+                target[version["id"]] = (artifact, version)
+        dataset_inputs = []
+        for version_id in payload.get("input_artifact_version_ids", []):
+            value = datasets.get(version_id)
+            if value is None:
+                continue
+            artifact, version = value
+            dataset_inputs.append(
+                DatasetInput(
+                    Dataset(
+                        artifact["name"],
+                        f"{version['algorithm']}:{version['digest']}",
+                        "homebrew-dvc",
+                        json.dumps(
+                            {
+                                "artifact_version_id": version_id,
+                                "uri": f"homebrew-dvc://{version_id}",
+                            },
+                            separators=(",", ":"),
+                            sort_keys=True,
+                        ),
+                    ),
+                    [InputTag("homebrew.artifact_version_id", version_id)],
+                )
+            )
+        model_outputs = []
+        for version_id in payload.get("output_artifact_version_ids", []):
+            value = models.get(version_id)
+            if value is not None:
+                model_outputs.append(LoggedModelOutput(value[1]["mlflow_model_id"], 0))
         return Run(
             RunInfo(  # type: ignore[no-untyped-call]
                 payload["id"],
@@ -178,6 +254,8 @@ class HomebrewTrackingStore(AbstractStore):
                     for item in payload["tags"]
                 ],
             ),
+            RunInputs(dataset_inputs),
+            RunOutputs(model_outputs),
         )
 
     def _experiment_entity(self, payload: dict[str, Any]) -> Experiment:
@@ -344,9 +422,11 @@ class HomebrewTrackingStore(AbstractStore):
     ) -> tuple[list[Run], str | None]:
         if run_view_type == ViewType.DELETED_ONLY:
             return [], None
+        snapshot = self._read_snapshot()
+        catalog = self._read_catalog()
         runs = [
-            self._run_entity(item)
-            for item in self._read_snapshot()["runs"]
+            self._run_entity(item, catalog)
+            for item in snapshot["runs"]
             if item["experiment_id"] in experiment_ids
         ]
         runs = SearchUtils.filter(runs, filter_string)  # type: ignore[no-untyped-call]
@@ -391,11 +471,86 @@ class HomebrewTrackingStore(AbstractStore):
     def link_traces_to_run(self, trace_ids: list[str], run_id: str) -> None:
         raise _unsupported("link_traces_to_run")
 
-    def search_logged_models(self, *args: Any, **kwargs: Any) -> Any:
-        raise _unsupported("search_logged_models")
+    @staticmethod
+    def _logged_model(
+        artifact: dict[str, Any], version: dict[str, Any], run: dict[str, Any]
+    ) -> LoggedModel:
+        timestamp = HomebrewTrackingStore._milliseconds(version["published_at"]) or 0
+        latest_metrics: dict[str, Metric] = {}
+        for item in run.get("metrics", []):
+            metric = Metric(
+                item["key"],
+                item["value"],
+                item["timestamp_ms"],
+                item["step"],
+                run_id=run["id"],
+                model_id=version["mlflow_model_id"],
+            )
+            previous = latest_metrics.get(metric.key)
+            if previous is None or (metric.step, metric.timestamp) >= (
+                previous.step,
+                previous.timestamp,
+            ):
+                latest_metrics[metric.key] = metric
+        return LoggedModel(
+            run["experiment_id"],
+            version["mlflow_model_id"],
+            f"{artifact['name']}-v{version['sequence']}",
+            f"homebrew-dvc://{version['id']}",
+            timestamp,
+            timestamp,
+            model_type="dvc",
+            source_run_id=run["id"],
+            tags={
+                "homebrew.artifact_id": artifact["id"],
+                "homebrew.artifact_version_id": version["id"],
+                "homebrew.dvc_digest": f"{version['algorithm']}:{version['digest']}",
+            },
+            params={item["key"]: item["value"] for item in run.get("parameters", [])},
+            metrics=list(latest_metrics.values()),
+        )
 
-    def get_logged_model(self, *args: Any, **kwargs: Any) -> Any:
-        raise _unsupported("get_logged_model")
+    def _logged_models(self) -> list[LoggedModel]:
+        snapshot = self._read_snapshot()
+        runs = {item["id"]: item for item in snapshot["runs"]}
+        values: list[LoggedModel] = []
+        for artifact in self._read_catalog().get("artifacts", []):
+            if artifact.get("kind") != "model":
+                continue
+            for version in artifact.get("versions", []):
+                run = runs.get(version.get("producing_run_id"))
+                if run is not None:
+                    values.append(self._logged_model(artifact, version, run))
+        return values
+
+    def search_logged_models(
+        self,
+        experiment_ids: list[str],
+        filter_string: str | None = None,
+        datasets: list[dict[str, Any]] | None = None,
+        max_results: int | None = None,
+        order_by: list[dict[str, Any]] | None = None,
+        page_token: str | None = None,
+    ) -> PagedList[LoggedModel]:
+        values = [
+            value for value in self._logged_models() if value.experiment_id in experiment_ids
+        ]
+        values = SearchLoggedModelsUtils.filter_logged_models(
+            values, filter_string, datasets
+        )
+        values = SearchLoggedModelsUtils.sort(values, order_by)  # type: ignore[no-untyped-call]
+        page, token = SearchUtils.paginate(  # type: ignore[no-untyped-call]
+            values, page_token, max_results or 1000
+        )
+        return PagedList(page, token)
+
+    def get_logged_model(self, model_id: str, allow_deleted: bool = False) -> LoggedModel:
+        value = next(
+            (item for item in self._logged_models() if item.model_id == model_id), None
+        )
+        if value is None:
+            raise MlflowException("logged_model_not_found", error_code=RESOURCE_DOES_NOT_EXIST)
+        return value
 
     def create_logged_model(self, *args: Any, **kwargs: Any) -> Any:
         raise _unsupported("create_logged_model")

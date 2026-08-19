@@ -23,6 +23,7 @@ services:
       dockerfile: deploy/images/api.Dockerfile
     environment:
       HOMEBREW_MLFLOW_PUBLIC_BASE_URL: http://localhost:8080
+      HOMEBREW_MLFLOW_MLFLOW_INTERNAL_URL: http://mlflow:5000
       HOMEBREW_MLFLOW_GITLAB_PUBLIC_BASE_URL: http://git.localhost:8080
       HOMEBREW_MLFLOW_DATABASE_URL: postgresql+psycopg://homebrew_mlflow:homebrew_mlflow@postgres:5432/homebrew_mlflow
       HOMEBREW_MLFLOW_CLIENT_RELEASE_MANIFEST: /srv/packages/release-manifest.json

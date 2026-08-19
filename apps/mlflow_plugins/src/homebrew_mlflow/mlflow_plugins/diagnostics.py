@@ -2,16 +2,19 @@ from __future__ import annotations
 
 import os
 
-from mlflow import MlflowClient
-from mlflow.exceptions import MlflowException
 from mlflow.tracking.request_auth.registry import fetch_auth
-from requests import Request
+from requests import Request, Session
 
 
 def main() -> int:
     provider_name = os.environ.get("MLFLOW_TRACKING_AUTH")
     auth = fetch_auth(provider_name)
-    prepared = Request("GET", "https://diagnostic.invalid/").prepare()
+    tracking_uri = os.environ.get("MLFLOW_TRACKING_URI", "").rstrip("/")
+    prepared = Request(
+        "GET",
+        f"{tracking_uri}/api/2.0/mlflow/runs/get",
+        params={"run_id": "diagnostic-invalid-run"},
+    ).prepare()
     if auth is None or not prepared:
         print("mlflow_client_auth=failed")
         return 2
@@ -23,9 +26,8 @@ def main() -> int:
     print("mlflow_client_auth=ok")
 
     try:
-        MlflowClient().get_run("diagnostic-invalid-run")
-    except MlflowException as error:
-        if error.error_code in {"CUSTOMER_UNAUTHORIZED", "UNAUTHENTICATED", "PERMISSION_DENIED"}:
+        response = Session().send(prepared, timeout=10)
+        if response.status_code in {401, 403}:
             print("mlflow_auth_boundary=ok")
             return 0
     except Exception:

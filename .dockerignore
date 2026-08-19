@@ -5,7 +5,9 @@
 .ruff_cache
 .venv
 apps/web/node_modules
-build
+build/*
+!build/mlflow-ui
+!build/mlflow-ui/**
 htmlcov
 __pycache__
 *.pyc

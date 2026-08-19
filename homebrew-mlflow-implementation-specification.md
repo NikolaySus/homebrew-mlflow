@@ -204,8 +204,11 @@ Machine credential scopes only narrow authority; they never expand it.
 
 ### 7.3 Artifact and provenance entities
 
-- `Artifact`: stable logical family owned by exactly one project
-- `ArtifactVersion`: immutable lifecycle/provenance identity owned through its Artifact
+- `Artifact`: stable logical family owned by exactly one project, classified as `dataset`, `model`,
+  `checkpoint`, `report`, or `generic`
+- `ArtifactVersion`: immutable lifecycle/provenance identity owned through its Artifact, with a
+  monotonically allocated family-local sequence
+- `ArtifactAlias`: mutable discovery name resolving to one exact Artifact Version in the same family
 - `DvcOutputIdentity`: algorithm, digest, kind, size, and file count for one complete declared output root
 - `Blob`: digest, algorithm, size, integrity state
 - `FileIndexEntry`: relative path, size, and referenced blob/object identity
@@ -230,6 +233,8 @@ Machine credential scopes only narrow authority; they never expand it.
 - Each Git Repository, Experiment, Artifact, and Pipeline Definition belongs to exactly one project.
 - Each Artifact Version belongs to exactly one Artifact and is immutable after publication.
 - Each Artifact Version has exactly one algorithm-qualified DVC output identity.
+- Each Artifact Alias belongs to one Artifact family and resolves to one available, verified,
+  non-archived Artifact Version in that family. Alias changes require Maintainer access and audit events.
 - One Artifact Version represents one complete declared DVC output root: a file or directory tree.
 - Several Artifact Versions may have the same DVC identity without merging ownership, lifecycle, labels, sharing, or provenance.
 - A completed Run never silently changes its resolved commit, pipeline version, environment, or exact input/output Artifact Version IDs.
@@ -411,9 +416,11 @@ MLflow browser session, maps each active authorized Research Project to a stable
 Workspace, rechecks Project Membership for every selected workspace, and forwards only a
 short-lived project-bound `mlflow`/`read` token. It MUST strip the browser session cookie before
 proxying to MLflow. Browser support is limited initially to workspace discovery, Experiment and
-Run search/read, parameters, scalar metric histories, tags, and policy-limited attachment
-list/download. Experiment/Run mutation, models, traces, prompts, evaluation datasets, and jobs are
-unsupported.
+Run search/read, parameters, scalar metric histories, tags, policy-limited attachment list/download,
+DVC-backed dataset inputs, and read-only Logged Model/Model Registry views backed by published `model`
+Artifact Versions and platform aliases. Model bytes remain in DVC and are never accepted through MLflow
+model logging. Experiment/Run mutation, registry mutation, traces, prompts, GenAI evaluation/quality
+surfaces, and jobs are unsupported and MUST be absent from the shipped browser navigation and routes.
 
 ## 12. Artifact and DVC content model
 
@@ -423,7 +430,7 @@ For each Artifact Version store:
 
 - stable platform Artifact Version ID;
 - Artifact family and owning project;
-- version label/sequence and descriptive metadata;
+- immutable family-local sequence and descriptive metadata;
 - DVC hash algorithm and digest;
 - output kind (`file` or `directory`);
 - total bytes and file count;
@@ -473,6 +480,13 @@ homebrew-mlflow run \
   --experiment image-layout \
   -- dvc exp run -n layout-ablation-17
 ```
+
+After the child succeeds and the exact DVC experiment revision is resolved, the coordinator SHOULD read
+that revision with `dvc exp show --rev <revision> --json --no-pager` through the declared local environment
+and batch-log finite scalar metrics plus scalar parameters to the managed Run. Explicit values already
+logged through MLflow take precedence over automatically discovered DVC values. Failure of this enrichment
+is advisory evidence and MUST NOT invalidate otherwise complete Run provenance or trigger server-side
+experiment execution.
 
 Publication:
 
@@ -824,6 +838,7 @@ The exact CRUD shape may evolve without violating domain rules, but v1 needs:
 - `/api/v1/experiments/{experiment_id}/runs`
 - `/api/v1/runs/{run_id}` including heartbeat and finalize extensions
 - `/api/v1/projects/{project_id}/artifacts`
+- `/api/v1/artifacts/{artifact_id}` metadata and `/aliases`
 - `/api/v1/artifacts/{artifact_id}/versions`
 - `/api/v1/artifact-versions/{version_id}` including file index and DVC pointer download
 - `/api/v1/artifact-versions/{version_id}/sharing-grants`
@@ -833,6 +848,7 @@ The exact CRUD shape may evolve without violating domain rules, but v1 needs:
 - `/api/v1/projects/{project_id}/dvc/credentials`
 - `/api/v1/projects/{project_id}/infisical-mapping`
 - `/api/v1/audit-events`
+- `/api/v1/diagnostics/mlflow` authenticated service/auth-boundary readiness
 - intentionally exposed health/readiness endpoints
 - pinned MLflow-compatible routes under the gateway's `/mlflow` surface
 
@@ -870,6 +886,7 @@ The initial UI must support:
 - Experiment and Run creation/browsing/comparison;
 - metric history visualization and Run provenance;
 - Artifact family/version browsing, integrity/availability state, size, file count, and file index;
+- Artifact classification plus audited mutable aliases that always resolve to exact immutable versions;
 - exact producing Run, source commit, pipeline/stage/output, environment, and lineage;
 - exact-version project-to-project sharing and revocation;
 - derivation/fork workflow;
@@ -899,7 +916,11 @@ standalone DVC instruction uv-mediated and explains that `homebrew-mlflow run` a
 through the selected environment. Template v5 pins the MLflow integration that supplies rotating token-file
 request authentication. Its migration updates only the managed dependency and corresponding locked wheel;
 it matches rendered lock entries using the repository context's normalized platform URL, and the prior
-immutable wheel remains available for rollback. Existing repositories adopt managed settings through ordered, idempotent
+immutable wheel remains available for rollback.
+Template v6 pins the DVC dataset/Logged Model integration, documents automatic exact-revision DVC metric
+and parameter capture, and documents typed Artifact publication. Its migration updates only the managed
+plugin dependency and corresponding locked wheel; researcher-authored experiment files remain untouched.
+Existing repositories adopt managed settings through ordered, idempotent
 template migrations in `homebrew-mlflow repository configure`. Migrations use narrow known-fragment edits,
 preserve unrelated researcher text, preflight conflicts before tracked writes, refuse newer template versions,
 and update the sentinel only after the migration succeeds. The helper reports changes and never commits them.

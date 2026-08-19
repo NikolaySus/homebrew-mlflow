@@ -67,6 +67,11 @@ inside `homebrew-mlflow run`.
 If the repository uses another declared training command, keep the outer `homebrew-mlflow run` wrapper so
 the Run captures command, Git state, DVC state, parameters, metrics, and environment metadata.
 
+The wrapper imports scalar metrics and parameters from the exact resolved DVC experiment revision. Explicit
+MLflow logging wins on key collisions. Use ordinary Runs and attachments for evaluation; do not call traces,
+`mlflow.genai.evaluate`, managed evaluation-dataset, prompt, job, gateway, or model-bundle APIs. Publish large
+datasets and models through DVC and ensure their Artifact family is classified correctly.
+
 For every meaningful run:
 
 - change only the variables required by the hypothesis;

@@ -6,7 +6,12 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from homebrew_mlflow.application import AccessTokenClaims, ArtifactCatalogService
-from homebrew_mlflow.domain import PublicId, ResourceKind
+from homebrew_mlflow.domain import (
+    ArtifactKind,
+    PublicId,
+    ResourceKind,
+    normalize_artifact_alias,
+)
 from homebrew_mlflow.infrastructure import SqlAlchemyArtifactCatalogUnitOfWork, create_session
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -20,6 +25,32 @@ class CreateArtifactRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str = Field(min_length=1, max_length=200)
+    kind: ArtifactKind = ArtifactKind.GENERIC
+    description: str | None = Field(default=None, max_length=2000)
+
+
+class UpdateArtifactRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: ArtifactKind
+    description: str | None = Field(default=None, max_length=2000)
+
+
+class SetArtifactAliasRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    artifact_version_id: str
+
+
+class ArtifactAliasResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    alias: str
+    artifact_version_id: str
+    created_by: str
+    created_at: datetime
+    updated_by: str
+    updated_at: datetime
 
 
 class ArtifactResponse(BaseModel):
@@ -28,6 +59,8 @@ class ArtifactResponse(BaseModel):
     id: str
     project_id: str
     name: str
+    kind: ArtifactKind
+    description: str | None
     created_at: datetime
     archived_at: datetime | None
 
@@ -47,6 +80,9 @@ class ArtifactVersionResponse(BaseModel):
     availability: str
     published_at: datetime
     archived_at: datetime | None
+    sequence: int
+    mlflow_model_id: str
+    producing_run_id: str | None
 
 
 class RetentionDependenciesResponse(BaseModel):
@@ -57,6 +93,7 @@ class RetentionDependenciesResponse(BaseModel):
     derivatives: int
     active_grants: int
     replicas: int
+    aliases: int
     legal_hold: bool
     blockers: list[str]
 
@@ -104,6 +141,11 @@ def _version_response(version) -> ArtifactVersionResponse:  # type: ignore[no-un
         availability=version.availability.value,
         published_at=version.published_at,
         archived_at=version.archived_at,
+        sequence=version.sequence,
+        mlflow_model_id=version.mlflow_model_id,
+        producing_run_id=(
+            str(version.producing_run_id) if version.producing_run_id is not None else None
+        ),
     )
 
 
@@ -123,12 +165,19 @@ def create_artifact(
         raise HTTPException(status_code=404, detail="project_not_found") from error
     with create_session(get_settings().database_url) as session:
         artifact = ArtifactCatalogService(SqlAlchemyArtifactCatalogUnitOfWork(session)).create(
-            claims.principal_id, parsed_project, body.name, datetime.now(UTC)
+            claims.principal_id,
+            parsed_project,
+            body.name,
+            datetime.now(UTC),
+            body.kind,
+            body.description,
         )
     return ArtifactResponse(
         id=str(artifact.id),
         project_id=str(artifact.owning_project_id),
         name=artifact.name,
+        kind=artifact.kind,
+        description=artifact.description,
         created_at=artifact.created_at,
         archived_at=artifact.archived_at,
     )
@@ -152,11 +201,153 @@ def list_artifacts(
             id=str(artifact.id),
             project_id=str(artifact.owning_project_id),
             name=artifact.name,
+            kind=artifact.kind,
+            description=artifact.description,
             created_at=artifact.created_at,
             archived_at=artifact.archived_at,
         )
         for artifact in artifacts
     ]
+
+
+@router.patch("/api/v1/artifacts/{artifact_id}", response_model=ArtifactResponse)
+def update_artifact(
+    artifact_id: str,
+    body: UpdateArtifactRequest,
+    request: Request,
+    claims: Annotated[AccessTokenClaims, Depends(platform_claims)],
+) -> ArtifactResponse:
+    try:
+        parsed = PublicId(ResourceKind.ARTIFACT, artifact_id)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail="artifact_not_found") from error
+    with create_session(get_settings().database_url) as session:
+        try:
+            artifact = ArtifactCatalogService(
+                SqlAlchemyArtifactCatalogUnitOfWork(session)
+            ).update(
+                claims.principal_id,
+                parsed,
+                body.kind,
+                body.description,
+                PublicId(ResourceKind.REQUEST, request.state.request_id),
+                datetime.now(UTC),
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=404, detail="artifact_not_found") from error
+    return ArtifactResponse(
+        id=str(artifact.id),
+        project_id=str(artifact.owning_project_id),
+        name=artifact.name,
+        kind=artifact.kind,
+        description=artifact.description,
+        created_at=artifact.created_at,
+        archived_at=artifact.archived_at,
+    )
+
+
+def _alias_response(value) -> ArtifactAliasResponse:  # type: ignore[no-untyped-def]
+    return ArtifactAliasResponse(
+        alias=value.alias,
+        artifact_version_id=str(value.artifact_version_id),
+        created_by=str(value.created_by),
+        created_at=value.created_at,
+        updated_by=str(value.updated_by),
+        updated_at=value.updated_at,
+    )
+
+
+@router.get(
+    "/api/v1/artifacts/{artifact_id}/aliases", response_model=list[ArtifactAliasResponse]
+)
+def list_artifact_aliases(
+    artifact_id: str,
+    claims: Annotated[AccessTokenClaims, Depends(platform_claims)],
+) -> list[ArtifactAliasResponse]:
+    try:
+        parsed = PublicId(ResourceKind.ARTIFACT, artifact_id)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail="artifact_not_found") from error
+    with create_session(get_settings().database_url) as session:
+        try:
+            values = ArtifactCatalogService(
+                SqlAlchemyArtifactCatalogUnitOfWork(session)
+            ).list_aliases(claims.principal_id, parsed)
+        except ValueError as error:
+            raise HTTPException(status_code=404, detail="artifact_not_found") from error
+    return [_alias_response(value) for value in values]
+
+
+@router.put(
+    "/api/v1/artifacts/{artifact_id}/aliases/{alias}",
+    response_model=ArtifactAliasResponse,
+)
+def set_artifact_alias(
+    artifact_id: str,
+    alias: str,
+    body: SetArtifactAliasRequest,
+    request: Request,
+    claims: Annotated[AccessTokenClaims, Depends(platform_claims)],
+) -> ArtifactAliasResponse:
+    try:
+        parsed_artifact = PublicId(ResourceKind.ARTIFACT, artifact_id)
+        parsed_version = PublicId(ResourceKind.ARTIFACT_VERSION, body.artifact_version_id)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail="artifact_or_version_not_found") from error
+    try:
+        normalized_alias = normalize_artifact_alias(alias)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail="invalid_artifact_alias") from error
+    with create_session(get_settings().database_url) as session:
+        try:
+            value = ArtifactCatalogService(
+                SqlAlchemyArtifactCatalogUnitOfWork(session)
+            ).set_alias(
+                claims.principal_id,
+                parsed_artifact,
+                normalized_alias,
+                parsed_version,
+                PublicId(ResourceKind.REQUEST, request.state.request_id),
+                datetime.now(UTC),
+            )
+        except ValueError as error:
+            raise HTTPException(
+                status_code=404, detail="artifact_or_version_not_found"
+            ) from error
+    return _alias_response(value)
+
+
+@router.delete(
+    "/api/v1/artifacts/{artifact_id}/aliases/{alias}", status_code=204
+)
+def delete_artifact_alias(
+    artifact_id: str,
+    alias: str,
+    request: Request,
+    claims: Annotated[AccessTokenClaims, Depends(platform_claims)],
+) -> Response:
+    try:
+        parsed = PublicId(ResourceKind.ARTIFACT, artifact_id)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail="artifact_not_found") from error
+    try:
+        normalized_alias = normalize_artifact_alias(alias)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail="invalid_artifact_alias") from error
+    with create_session(get_settings().database_url) as session:
+        try:
+            ArtifactCatalogService(
+                SqlAlchemyArtifactCatalogUnitOfWork(session)
+            ).delete_alias(
+                claims.principal_id,
+                parsed,
+                normalized_alias,
+                PublicId(ResourceKind.REQUEST, request.state.request_id),
+                datetime.now(UTC),
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=404, detail="artifact_alias_not_found") from error
+    return Response(status_code=204)
 
 
 @router.get(
@@ -218,6 +409,8 @@ def archive_artifact(
         id=str(artifact.id),
         project_id=str(artifact.owning_project_id),
         name=artifact.name,
+        kind=artifact.kind,
+        description=artifact.description,
         created_at=artifact.created_at,
         archived_at=artifact.archived_at,
     )
@@ -269,6 +462,7 @@ def get_retention_dependencies(
         derivatives=value.derivatives,
         active_grants=value.active_grants,
         replicas=value.replicas,
+        aliases=value.aliases,
         legal_hold=value.legal_hold,
         blockers=list(value.blockers),
     )

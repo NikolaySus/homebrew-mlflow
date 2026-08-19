@@ -57,8 +57,8 @@ class Client:
                     ),
                 }
             )
-        if url.endswith("/mlflow/health"):
-            return Response("OK")
+        if url.endswith("/api/v1/diagnostics/mlflow"):
+            return Response({"status": "ready", "backend_status": 401})
         raise AssertionError(url)
 
 

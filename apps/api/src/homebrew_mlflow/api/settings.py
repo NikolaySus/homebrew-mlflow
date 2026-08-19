@@ -11,10 +11,11 @@ class Settings(BaseSettings):
 
     environment: str = "development"
     public_base_url: AnyHttpUrl = AnyHttpUrl("http://localhost:8080")
+    mlflow_internal_url: AnyHttpUrl = AnyHttpUrl("http://mlflow:5000")
     database_url: str = (
         "postgresql+psycopg://homebrew_mlflow:homebrew_mlflow@localhost:5432/homebrew_mlflow"
     )
-    client_recommended_version: str = "0.2.6"
+    client_recommended_version: str = "0.2.7"
     client_compatible_versions: str = ">=0.2,<0.3"
     client_requires_python: str = ">=3.11"
     client_platforms: list[str] = Field(default_factory=lambda: ["linux", "macos", "windows"])

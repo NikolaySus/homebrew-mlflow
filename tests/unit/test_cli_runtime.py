@@ -193,13 +193,13 @@ requires-dist = [
         "uv.lock",
     }
     assert second == ()
-    assert '"template_version": 5' in (tmp_path / ".homebrew-mlflow.json").read_text()
+    assert '"template_version": 6' in (tmp_path / ".homebrew-mlflow.json").read_text()
     assert "custom introduction" in (tmp_path / "README.md").read_text()
     assert "uv run --frozen dvc status" in (tmp_path / "README.md").read_text()
     assert "custom rule" in (tmp_path / "AGENTS.md").read_text()
     assert "uv run --frozen dvc dag" in (tmp_path / "AGENTS.md").read_text()
-    assert "homebrew-mlflow-plugins==0.1.1" in (tmp_path / "pyproject.toml").read_text()
-    assert "homebrew_mlflow_plugins-0.1.1" in (tmp_path / "uv.lock").read_text()
+    assert "homebrew-mlflow-plugins==0.1.4" in (tmp_path / "pyproject.toml").read_text()
+    assert "homebrew_mlflow_plugins-0.1.4" in (tmp_path / "uv.lock").read_text()
 
 
 def test_repository_template_upgrade_conflict_does_not_write(tmp_path: Path) -> None:
