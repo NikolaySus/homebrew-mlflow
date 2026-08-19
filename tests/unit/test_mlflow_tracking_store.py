@@ -199,6 +199,9 @@ def test_tracking_store_searches_browser_workspace(monkeypatch) -> None:  # type
             runs = HomebrewTrackingStore("homebrew://platform").search_runs(
                 ["exp_01K00000000000000000000000"], None, 1, max_results=10
             )
+            datasets = HomebrewTrackingStore("homebrew://platform")._search_datasets(
+                ["exp_01K00000000000000000000000"]
+            )
         finally:
             clear_server_request_workspace()
     assert [item.name for item in experiments] == ["baseline"]
@@ -207,3 +210,74 @@ def test_tracking_store_searches_browser_workspace(monkeypatch) -> None:  # type
     assert runs[0].inputs.dataset_inputs[0].dataset.name == "training-data"
     assert runs[0].inputs.dataset_inputs[0].dataset.digest == f"md5:{'a' * 32}"
     assert runs[0].outputs.model_outputs[0].model_id == "m-0123456789abcdef"
+    assert [item.to_dict() for item in datasets] == [
+        {
+            "experiment_id": "exp_01K00000000000000000000000",
+            "name": "training-data",
+            "digest": f"md5:{'a' * 32}",
+            "context": None,
+        }
+    ]
+
+
+def test_mlflow_search_datasets_handler_serializes_dvc_summaries(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    from mlflow.server.handlers import _search_datasets_handler
+
+    monkeypatch.setenv("HOMEBREW_MLFLOW_PLATFORM_INTERNAL_URL", "http://api:8000")
+    workspace = "pr-01k00000000000000000000000"
+    experiment_id = "exp_01K00000000000000000000000"
+    snapshot = {
+        "runs": [
+            {
+                "experiment_id": experiment_id,
+                "input_artifact_version_ids": ["av_dataset"],
+            }
+        ]
+    }
+    catalog = {
+        "artifacts": [
+            {
+                "name": "training-data",
+                "kind": "dataset",
+                "versions": [
+                    {
+                        "id": "av_dataset",
+                        "algorithm": "md5",
+                        "digest": "a" * 32,
+                    }
+                ],
+            }
+        ]
+    }
+    monkeypatch.setattr(
+        "homebrew_mlflow.mlflow_plugins.tracking_store.requests.get",
+        lambda url, **_kwargs: Response(catalog if url.endswith("/catalog") else snapshot),
+    )
+    store = HomebrewTrackingStore("homebrew://platform")
+    monkeypatch.setattr("mlflow.server.handlers._get_tracking_store", lambda: store)
+    authorization = _token(
+        {"scp": ["read"], "prj": "pr_01K00000000000000000000000"}
+    )
+    app = Flask(__name__)
+    with app.test_request_context(
+        "/ajax-api/2.0/mlflow/experiments/search-datasets",
+        method="POST",
+        json={"experiment_ids": [experiment_id]},
+        headers={"Authorization": f"Bearer {authorization}"},
+    ):
+        set_server_request_workspace(workspace)
+        try:
+            response = _search_datasets_handler()
+        finally:
+            clear_server_request_workspace()
+
+    assert response.status_code == 200
+    assert response.get_json() == {
+        "dataset_summaries": [
+            {
+                "experiment_id": experiment_id,
+                "name": "training-data",
+                "digest": f"md5:{'a' * 32}",
+            }
+        ]
+    }

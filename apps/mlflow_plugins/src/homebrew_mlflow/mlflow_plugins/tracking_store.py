@@ -23,6 +23,7 @@ from mlflow.entities import (
     RunTag,
     ViewType,
 )
+from mlflow.entities.dataset_summary import _DatasetSummary
 from mlflow.exceptions import MlflowException
 from mlflow.protos.databricks_pb2 import (
     CUSTOMER_UNAUTHORIZED,
@@ -557,6 +558,35 @@ class HomebrewTrackingStore(AbstractStore):
 
     def search_datasets(self, *args: Any, **kwargs: Any) -> Any:
         raise _unsupported("search_datasets")
+
+    def _search_datasets(self, experiment_ids: list[str]) -> list[_DatasetSummary]:
+        """Return the DVC dataset versions referenced by Runs in the experiments."""
+        snapshot = self._read_snapshot()
+        requested = set(experiment_ids)
+        run_experiments: dict[str, set[str]] = {}
+        for run in snapshot["runs"]:
+            if run["experiment_id"] not in requested:
+                continue
+            for version_id in run.get("input_artifact_version_ids", []):
+                run_experiments.setdefault(version_id, set()).add(run["experiment_id"])
+        summaries: dict[tuple[str, str, str], _DatasetSummary] = {}
+        for artifact in self._read_catalog().get("artifacts", []):
+            if artifact.get("kind") != "dataset":
+                continue
+            for version in artifact.get("versions", []):
+                experiment_ids_for_version = run_experiments.get(version["id"])
+                if not experiment_ids_for_version:
+                    continue
+                digest = f"{version['algorithm']}:{version['digest']}"
+                for experiment_id in experiment_ids_for_version:
+                    key = (experiment_id, artifact["name"], digest)
+                    summaries[key] = _DatasetSummary(  # type: ignore[no-untyped-call]
+                        experiment_id=experiment_id,
+                        name=artifact["name"],
+                        digest=digest,
+                        context=None,
+                    )
+        return list(summaries.values())
 
     def search_traces(self, *args: Any, **kwargs: Any) -> Any:
         raise _unsupported("search_traces")
