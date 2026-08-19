@@ -55,6 +55,11 @@ class Client:
             )
         return Response({"state": "succeeded"})
 
+    def get(self, url: str, **_kwargs: Any) -> Response:
+        if "/artifact-versions/" in url:
+            return Response({"integrity": "verified", "availability": "available"})
+        raise AssertionError(url)
+
     def put(self, url: str, **_kwargs: Any) -> Response:
         if url.endswith("/environment-specifications/resolve"):
             return Response({"id": "env_01K00000000000000000000000"})
@@ -147,6 +152,8 @@ def test_run_preserves_child_success_with_workspace_changes(  # type: ignore[no-
             "run",
             "--experiment",
             "baseline",
+            "--input-version",
+            "av_01K00000000000000000000000",
             "--",
             "python",
             "train.py",
@@ -162,6 +169,29 @@ def test_run_preserves_child_success_with_workspace_changes(  # type: ignore[no-
     assert Client.requests[-1][1]["json"]["git_commit_sha"] == "a" * 40
     assert Client.requests[-1][1]["json"]["provenance_status"] == expected_provenance
     assert Client.requests[-1][1]["json"]["dvc_experiment_revision"] == expected_revision
+    assert Client.requests[-1][1]["json"]["evidence"]["input_artifact_version_ids"] == [
+        "av_01K00000000000000000000000"
+    ]
+
+
+def test_run_rejects_non_version_input_before_starting_work() -> None:
+    result = CliRunner().invoke(
+        app,
+        [
+            "run",
+            "--experiment",
+            "baseline",
+            "--input-version",
+            "training-dataset@latest",
+            "--",
+            "python",
+            "train.py",
+        ],
+        terminal_width=160,
+    )
+
+    assert result.exit_code == 2
+    assert "exact, published av_... ID" in result.output
 
 
 def test_changed_dvc_experiment_resolves_one_descendant(monkeypatch, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]

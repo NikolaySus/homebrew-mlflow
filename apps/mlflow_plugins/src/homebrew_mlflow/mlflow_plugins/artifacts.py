@@ -3,6 +3,7 @@ from __future__ import annotations
 import mimetypes
 import os
 import shutil
+import threading
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -32,6 +33,8 @@ class HomebrewArtifactRepository(ArtifactRepository):
         ).rstrip("/")
         if not self._base_url:
             raise MlflowException("HOMEBREW_MLFLOW_SERVER is required")
+        self._download_lock = threading.Lock()
+        self._active_download_headers: dict[str, str] | None = None
 
     def _headers(self) -> dict[str, str]:
         return authorization_header()
@@ -70,10 +73,22 @@ class HomebrewArtifactRepository(ArtifactRepository):
         response.raise_for_status()
         return [FileInfo(**item) for item in response.json()["files"]]  # type: ignore[no-untyped-call]
 
+    def download_artifacts(self, artifact_path: str, dst_path: str | None = None) -> str:
+        # MLflow dispatches _download_file to its thread pool. Flask's request context is
+        # thread-local, so capture the scoped token while still handling the authenticated
+        # request and make it available only for the duration of this download.
+        headers = self._headers()
+        with self._download_lock:
+            self._active_download_headers = headers
+            try:
+                return super().download_artifacts(artifact_path, dst_path)
+            finally:
+                self._active_download_headers = None
+
     def _download_file(self, remote_file_path: str, local_path: str) -> None:
         response = requests.get(
             f"{self._base_url}/api/v1/runs/{self._run_id}/attachments/content",
-            headers=self._headers(),
+            headers=self._active_download_headers or self._headers(),
             params={"path": remote_file_path},
             stream=True,
             timeout=60,

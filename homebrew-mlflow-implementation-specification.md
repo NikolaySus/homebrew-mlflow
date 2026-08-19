@@ -920,6 +920,8 @@ immutable wheel remains available for rollback.
 Template v6 pins the DVC dataset/Logged Model integration, documents automatic exact-revision DVC metric
 and parameter capture, and documents typed Artifact publication. Its migration updates only the managed
 plugin dependency and corresponding locked wheel; researcher-authored experiment files remain untouched.
+Template v7 pins the attachment-download authentication fix. Its migration updates only the managed
+plugin dependency and corresponding locked wheel.
 Existing repositories adopt managed settings through ordered, idempotent
 template migrations in `homebrew-mlflow repository configure`. Migrations use narrow known-fragment edits,
 preserve unrelated researcher text, preflight conflicts before tracked writes, refuse newer template versions,

@@ -9,8 +9,8 @@ recorded acceptance tests.
 | PostgreSQL | 16 |
 | DVC client | 3.67.1 |
 | MLflow server and client | 3.15.1 |
-| Homebrew MLflow server plugin | 0.1.3 |
-| Research-repository request-auth plugin | 0.1.1-0.1.3 |
+| Homebrew MLflow server plugin | 0.1.5 |
+| Research-repository MLflow plugin | 0.1.5 |
 | GitLab CE | 19.2.1-ce.0 |
 | Infisical | 0.162.14 |
 | MinIO | Compose image digest in `deploy/compose/compose.yaml` |
@@ -19,6 +19,7 @@ recorded acceptance tests.
 The supported client-write subset is Run lookup/resume, parameter logging, scalar metric
 logging/history, tag upsert, batch logging, coordinator-owned termination, and policy-limited Run
 attachments. The read-only browser subset adds native project Workspaces, Experiment/Run search
-and detail, parameters, metrics and histories, tags, and attachment list/download. Experiment/Run
-mutation, model registry, model binary logging, tracing, prompts, evaluation datasets, and job
-execution return or surface `unsupported_operation` and are not supported.
+and detail, parameters, metrics and histories, tags, attachment list/download, DVC-backed dataset
+inputs, and read-only Logged Model/Model Registry views. Experiment/Run mutation, registry mutation,
+model binary logging, tracing, prompts, GenAI evaluation, and job execution return or surface
+`unsupported_operation` and are not supported.

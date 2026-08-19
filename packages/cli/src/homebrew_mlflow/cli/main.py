@@ -51,6 +51,7 @@ app.add_typer(project_app, name="project")
 repository_app = typer.Typer(no_args_is_help=True)
 app.add_typer(repository_app, name="repository")
 _HEARTBEAT_INTERVAL_SECONDS = 30
+_ARTIFACT_VERSION_ID = re.compile(r"^av_[0-9A-HJKMNP-TV-Z]{26}$")
 
 
 def _config_path() -> Path:
@@ -1350,9 +1351,9 @@ def artifact_list() -> None:
         typer.echo(f"{artifact['id']}\t{artifact['kind']}\t{artifact['name']}")
 
 
-def _resolve_artifact(
+def _resolve_artifact_record(
     client: httpx.Client, server: str, headers: dict[str, str], project_id: str, reference: str
-) -> str:
+) -> dict[str, Any]:
     response = client.get(f"{server}/api/v1/projects/{project_id}/artifacts", headers=headers)
     response.raise_for_status()
     matches = [
@@ -1364,7 +1365,49 @@ def _resolve_artifact(
         raise typer.BadParameter(
             f"artifact {reference!r} was not found or is ambiguous; create it explicitly first"
         )
-    return str(matches[0]["id"])
+    return cast(dict[str, Any], matches[0])
+
+
+def _resolve_artifact(
+    client: httpx.Client, server: str, headers: dict[str, str], project_id: str, reference: str
+) -> str:
+    return str(
+        _resolve_artifact_record(client, server, headers, project_id, reference)["id"]
+    )
+
+
+def _warn_if_generic_artifact(artifact: dict[str, Any]) -> None:
+    if artifact.get("kind") != "generic":
+        return
+    artifact_id = str(artifact.get("id", "unknown"))
+    typer.echo(
+        f"Warning: Artifact {artifact.get('name', artifact_id)!r} is generic; "
+        "MLflow only exposes published datasets and models when the family is "
+        "classified as dataset or model.",
+        err=True,
+    )
+
+
+def _preflight_run_inputs(
+    client: httpx.Client,
+    server: str,
+    headers: dict[str, str],
+    input_versions: list[str],
+) -> None:
+    for version_id in input_versions:
+        response = client.get(
+            f"{server}/api/v1/artifact-versions/{version_id}", headers=headers
+        )
+        if response.status_code in {403, 404}:
+            raise typer.BadParameter(
+                f"--input-version {version_id} is not accessible"
+            )
+        response.raise_for_status()
+        version = response.json()
+        if version.get("integrity") != "verified" or version.get("availability") != "available":
+            raise typer.BadParameter(
+                f"--input-version {version_id} is not verified and available"
+            )
 
 
 @artifact_app.command("classify")
@@ -1481,9 +1524,11 @@ def submit_publication(
     with httpx.Client(timeout=30) as client:
         session = _refresh_session(client, server)
         platform_headers = _project_headers(session)
-        artifact_id = _resolve_artifact(
+        artifact_record = _resolve_artifact_record(
             client, server, platform_headers, repository["project_id"], artifact
         )
+        artifact_id = str(artifact_record["id"])
+        _warn_if_generic_artifact(artifact_record)
         exchange = client.post(
             f"{server}/api/v1/auth/exchange",
             headers={"Authorization": f"Bearer {session['access_token']}"},
@@ -1534,7 +1579,16 @@ def submit_publication(
 def run(
     context: typer.Context,
     experiment: Annotated[str, typer.Option("--experiment")],
-    input_version: Annotated[list[str] | None, typer.Option("--input-version")] = None,
+    input_version: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--input-version",
+            help=(
+                "Exact, already-published av_... input ID; repeat for multiple inputs. "
+                "Inputs become immutable when the Run finalizes."
+            ),
+        ),
+    ] = None,
     environment_kind: Annotated[str | None, typer.Option("--environment-kind")] = None,
     environment_name: Annotated[str | None, typer.Option("--environment-name")] = None,
     secrets_enabled: Annotated[
@@ -1547,6 +1601,23 @@ def run(
         command = command[1:]
     if not command:
         raise typer.BadParameter("a command is required after --")
+    input_versions = input_version or []
+    invalid_input_versions = [
+        value for value in input_versions if _ARTIFACT_VERSION_ID.fullmatch(value) is None
+    ]
+    if invalid_input_versions:
+        raise typer.BadParameter(
+            "--input-version must be an exact, published av_... ID"
+        )
+    if len(set(input_versions)) != len(input_versions):
+        raise typer.BadParameter("--input-version cannot contain duplicate Artifact Version IDs")
+    if input_versions:
+        typer.echo("Immutable Run inputs: " + ", ".join(input_versions))
+    else:
+        typer.echo(
+            "Run inputs: none. DVC artifacts published afterward are outputs and will not "
+            "appear as MLflow Dataset inputs."
+        )
     repository = _repository_context()
     root = repository_root()
     server = repository["server"].rstrip("/")
@@ -1566,6 +1637,7 @@ def run(
     with httpx.Client(timeout=15) as client:
         session = _refresh_session(client, server)
         headers = _project_headers(session)
+        _preflight_run_inputs(client, server, headers, input_versions)
         environment_id = _resolve_environment(
             client,
             server,
@@ -1777,7 +1849,7 @@ def run(
                     "heartbeat_error": heartbeat_error[-1] if heartbeat_error else None,
                     "heartbeat_error_count": len(heartbeat_error),
                     "client_version": __version__,
-                    "input_artifact_version_ids": input_version or [],
+                    "input_artifact_version_ids": input_versions,
                     "dvc_tracking_capture": dvc_tracking_capture,
                     "secret_context": secret_context,
                     "environment": {

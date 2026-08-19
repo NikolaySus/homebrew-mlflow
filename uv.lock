@@ -1730,7 +1730,7 @@ wheels = [
 
 [[package]]
 name = "homebrew-mlflow"
-version = "0.2.7"
+version = "0.2.8"
 source = { editable = "packages/cli" }
 dependencies = [
     { name = "boto3" },
@@ -1834,7 +1834,7 @@ requires-dist = [
 
 [[package]]
 name = "homebrew-mlflow-plugins"
-version = "0.1.4"
+version = "0.1.5"
 source = { editable = "apps/mlflow_plugins" }
 dependencies = [
     { name = "mlflow" },
