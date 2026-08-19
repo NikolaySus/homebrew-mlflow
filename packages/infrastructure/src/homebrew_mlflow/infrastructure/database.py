@@ -3956,6 +3956,9 @@ class SqlAlchemyPublicationWorkStore(SqlAlchemyPublicationUnitOfWork):
                 published_at=version.published_at,
             )
         )
+        # These rows are connected by database foreign keys rather than ORM
+        # relationships, so SQLAlchemy cannot infer their insert order.
+        self._session.flush()
         for item in validated.files:
             self._session.add(
                 ArtifactVersionFileRow(
