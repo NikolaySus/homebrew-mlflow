@@ -24,7 +24,7 @@ class RequestRateLimiter:
         limit = self._limit(path)
         if limit is None:
             return True
-        key = (request.client.host if request.client else "unknown", path)
+        key = (self._client_address(request), path)
         now = time.monotonic()
         with self._lock:
             values = self._requests[key]
@@ -37,6 +37,11 @@ class RequestRateLimiter:
 
     @staticmethod
     def _limit(path: str) -> int | None:
+        if path == "/api/v1/auth/mlflow/authorize":
+            # Caddy calls this once for every MLflow document, API request, and
+            # code-split UI asset. A native MLflow page can legitimately exceed
+            # the interactive-login limit during one navigation.
+            return 1200
         if path.startswith("/api/v1/auth/"):
             return 60
         if path.endswith("/dvc-credentials"):
@@ -44,6 +49,13 @@ class RequestRateLimiter:
         if path.endswith("/publication-operations"):
             return 30
         return None
+
+    @staticmethod
+    def _client_address(request: Request) -> str:
+        forwarded = request.headers.get("X-Forwarded-For")
+        if forwarded:
+            return forwarded.split(",", 1)[0].strip()
+        return request.client.host if request.client else "unknown"
 
 
 def record_request(method: str, path: str, status: int, elapsed_seconds: float) -> None:

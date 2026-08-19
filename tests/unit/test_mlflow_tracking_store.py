@@ -104,6 +104,23 @@ def test_tracking_store_missing_request_auth_is_unauthorized(monkeypatch) -> Non
     assert caught.value.error_code == "CUSTOMER_UNAUTHORIZED"
 
 
+@pytest.mark.parametrize(
+    "operation",
+    ["search_mcp_servers", "list_gateway_endpoints", "list_endpoint_bindings"],
+)
+def test_tracking_store_reports_unsupported_native_surfaces(
+    operation: str, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setenv("HOMEBREW_MLFLOW_PLATFORM_INTERNAL_URL", "http://api:8000")
+    store = HomebrewTrackingStore("homebrew://platform")
+
+    with pytest.raises(MlflowException) as caught:
+        getattr(store, operation)()
+
+    assert caught.value.error_code == "INVALID_PARAMETER_VALUE"
+    assert "unsupported_operation" in str(caught.value)
+
+
 def test_tracking_store_searches_browser_workspace(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     monkeypatch.setenv("HOMEBREW_MLFLOW_PLATFORM_INTERNAL_URL", "http://api:8000")
     workspace = "pr-01k00000000000000000000000"

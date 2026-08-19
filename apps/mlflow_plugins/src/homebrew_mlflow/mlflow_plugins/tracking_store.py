@@ -405,3 +405,12 @@ class HomebrewTrackingStore(AbstractStore):
 
     def search_traces(self, *args: Any, **kwargs: Any) -> Any:
         raise _unsupported("search_traces")
+
+    def search_mcp_servers(self, *args: Any, **kwargs: Any) -> Any:
+        raise _unsupported("search_mcp_servers")
+
+    def list_gateway_endpoints(self, *args: Any, **kwargs: Any) -> Any:
+        raise _unsupported("list_gateway_endpoints")
+
+    def list_endpoint_bindings(self, *args: Any, **kwargs: Any) -> Any:
+        raise _unsupported("list_endpoint_bindings")

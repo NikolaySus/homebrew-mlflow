@@ -9,8 +9,8 @@ recorded acceptance tests.
 | PostgreSQL | 16 |
 | DVC client | 3.67.1 |
 | MLflow server and client | 3.15.1 |
-| Homebrew MLflow server plugin | 0.1.2 |
-| Research-repository request-auth plugin | 0.1.1-0.1.2 |
+| Homebrew MLflow server plugin | 0.1.3 |
+| Research-repository request-auth plugin | 0.1.1-0.1.3 |
 | GitLab CE | 19.2.1-ce.0 |
 | Infisical | 0.162.14 |
 | MinIO | Compose image digest in `deploy/compose/compose.yaml` |
