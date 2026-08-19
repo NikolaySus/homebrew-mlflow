@@ -88,6 +88,7 @@ class Run:
     finalization_evidence: dict[str, Any] | None = None
     pipeline_version_id: PublicId | None = None
     environment_specification_id: PublicId | None = None
+    finalization_idempotency_key: str | None = None
 
     @classmethod
     def create(
@@ -153,6 +154,11 @@ class Run:
     def begin_finalization(self) -> Run:
         return replace(self, state=transition_run(self.state, RunState.FINALIZING))
 
+    def begin_reconciliation(self) -> Run:
+        if self.state is not RunState.INCOMPLETE:
+            raise InvalidRunTransition("only an incomplete Run can be reconciled")
+        return replace(self, state=RunState.FINALIZING)
+
     def mark_incomplete(self, now: datetime) -> Run:
         return replace(
             self,
@@ -173,6 +179,7 @@ class Run:
         dvc_experiment_revision: str | None = None,
         pipeline_version_id: PublicId | None = None,
         environment_specification_id: PublicId | None = None,
+        finalization_idempotency_key: str | None = None,
     ) -> Run:
         if target not in {RunState.SUCCEEDED, RunState.FAILED, RunState.INTERRUPTED}:
             raise InvalidRunTransition("Run finalization requires a completed terminal state")
@@ -197,5 +204,8 @@ class Run:
             pipeline_version_id=pipeline_version_id or self.pipeline_version_id,
             environment_specification_id=(
                 environment_specification_id or self.environment_specification_id
+            ),
+            finalization_idempotency_key=(
+                finalization_idempotency_key or self.finalization_idempotency_key
             ),
         )

@@ -102,7 +102,7 @@ from .repositories import (
     RepositoryUnitOfWork,
 )
 from .retention import PublishedRetentionPolicy, RetentionDependencies
-from .runs import CreateRun, FinalizeRun, RunProvenance, RunService, RunUnitOfWork
+from .runs import CreateRun, FinalizeRun, RunNotFound, RunProvenance, RunService, RunUnitOfWork
 from .secret_contexts import SecretContextService, SecretContextUnitOfWork
 from .setup import ClaimInstallation, SetupService, SetupStore
 from .sharing import ArtifactSharingService, SharingUnitOfWork
@@ -136,6 +136,7 @@ __all__ = [
     "UploadAttachment",
     "AuthorizationDenied",
     "CreateProject",
+    "RunNotFound",
     "CreatedMachineCredential",
     "DvcCredentialAuthorization",
     "DvcCredentialIssuer",

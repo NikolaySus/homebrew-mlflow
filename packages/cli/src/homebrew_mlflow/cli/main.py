@@ -13,6 +13,7 @@ import threading
 import time
 import unicodedata
 import webbrowser
+from contextlib import suppress
 from pathlib import Path
 from typing import Annotated, Any, cast
 from urllib.parse import urlsplit
@@ -46,10 +47,181 @@ project_app = typer.Typer(no_args_is_help=True)
 app.add_typer(project_app, name="project")
 repository_app = typer.Typer(no_args_is_help=True)
 app.add_typer(repository_app, name="repository")
+_HEARTBEAT_INTERVAL_SECONDS = 30
 
 
 def _config_path() -> Path:
     return Path(typer.get_app_dir("homebrew-mlflow")) / "config.json"
+
+
+def _pending_run_directory() -> Path:
+    return Path(typer.get_app_dir("homebrew-mlflow")) / "pending-runs"
+
+
+def _write_private_json(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        os.chmod(temporary_name, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+            json.dump(payload, output, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary_name, path)
+    except BaseException:
+        with suppress(OSError):
+            os.close(descriptor)
+        Path(temporary_name).unlink(missing_ok=True)
+        raise
+
+
+def _replace_token_file(path: Path, token: str) -> None:
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        os.chmod(temporary_name, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+            output.write(token)
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary_name, path)
+    except BaseException:
+        with suppress(OSError):
+            os.close(descriptor)
+        Path(temporary_name).unlink(missing_ok=True)
+        raise
+
+
+def _finalization_journal_path(server: str, run_id: str) -> Path:
+    server_key = hashlib.sha256(server.encode("utf-8")).hexdigest()[:16]
+    return _pending_run_directory() / server_key / f"{run_id}.json"
+
+
+class _RetryableFinalization(RuntimeError):
+    pass
+
+
+def _raise_for_finalization_status(response: httpx.Response) -> None:
+    if response.status_code in {408, 425, 429} or response.status_code >= 500:
+        raise _RetryableFinalization(f"HTTP {response.status_code}")
+    response.raise_for_status()
+
+
+def _recover_finalization(path: Path, *, run_token: str | None = None) -> dict[str, Any]:
+    journal = json.loads(path.read_text(encoding="utf-8"))
+    if (
+        journal.get("schema") != 1
+        or not isinstance(journal.get("server"), str)
+        or not isinstance(journal.get("run_id"), str)
+        or not isinstance(journal.get("project_id"), str)
+        or not isinstance(journal.get("idempotency_key"), str)
+        or not isinstance(journal.get("finalization"), dict)
+    ):
+        raise RuntimeError("pending Run journal is invalid")
+    server = journal["server"].rstrip("/")
+    run_id = journal["run_id"]
+    delays = (0, 1, 2, 4, 8, 16, 30)
+    last_error: Exception | None = None
+    for attempt, delay in enumerate(delays):
+        if delay:
+            time.sleep(delay)
+        try:
+            with httpx.Client(timeout=15) as client:
+                pipeline = journal.get("pipeline_resolution")
+                platform_headers: dict[str, str] | None = None
+                if (
+                    journal["finalization"].get("pipeline_version_id") is None
+                    and isinstance(pipeline, dict)
+                ):
+                    platform_headers = _project_headers(_refresh_session(client, server))
+                    response = client.put(
+                        f"{server}/api/v1/projects/{journal['project_id']}"
+                        "/pipeline-versions/resolve",
+                        headers=platform_headers,
+                        json=pipeline,
+                    )
+                    _raise_for_finalization_status(response)
+                    pipeline_id = response.json().get("id")
+                    if not isinstance(pipeline_id, str):
+                        raise RuntimeError("platform returned an invalid pipeline version")
+                    journal["finalization"]["pipeline_version_id"] = pipeline_id
+                    _write_private_json(path, journal)
+                if run_token is not None:
+                    finalization_headers = {"Authorization": f"Bearer {run_token}"}
+                else:
+                    finalization_headers = platform_headers or _project_headers(
+                        _refresh_session(client, server)
+                    )
+                response = client.post(
+                    f"{server}/api/v1/runs/{run_id}/finalize",
+                    headers={
+                        **finalization_headers,
+                        "Idempotency-Key": journal["idempotency_key"],
+                    },
+                    json=journal["finalization"],
+                )
+                _raise_for_finalization_status(response)
+                result = cast(dict[str, Any], response.json())
+            path.unlink(missing_ok=True)
+            return result
+        except httpx.HTTPStatusError as error:
+            if (
+                error.response.status_code not in {408, 425, 429}
+                and error.response.status_code < 500
+            ):
+                raise
+            last_error = error
+            if attempt == len(delays) - 1:
+                break
+        except (httpx.TransportError, _RetryableFinalization) as error:
+            last_error = error
+            if attempt == len(delays) - 1:
+                break
+    assert last_error is not None
+    raise RuntimeError(
+        f"Run finalization remains unavailable after {len(delays)} attempts "
+        f"({type(last_error).__name__})"
+    ) from last_error
+
+
+def _find_finalization_journal(run_id: str) -> Path:
+    matches = list(_pending_run_directory().glob(f"*/{run_id}.json"))
+    if len(matches) != 1:
+        raise RuntimeError(f"found {len(matches)} pending finalizations for Run {run_id}")
+    return matches[0]
+
+
+def _send_run_heartbeats(
+    stop: threading.Event,
+    server: str,
+    run_id: str,
+    token_path: Path,
+    errors: list[str],
+) -> None:
+    while not stop.wait(_HEARTBEAT_INTERVAL_SECONDS):
+        try:
+            with httpx.Client(timeout=15) as heartbeat_client:
+                logging_token = token_path.read_text(encoding="utf-8").strip()
+                if not logging_token:
+                    raise RuntimeError("Run logging token file is empty")
+                response = heartbeat_client.post(
+                    f"{server}/api/v1/runs/{run_id}/heartbeat",
+                    headers={"Authorization": f"Bearer {logging_token}"},
+                )
+                response.raise_for_status()
+                refreshed_logging_token = response.json().get("logging_token")
+                if not isinstance(refreshed_logging_token, str):
+                    raise RuntimeError("platform omitted the refreshed Run logging token")
+                _replace_token_file(token_path, refreshed_logging_token)
+        except httpx.HTTPStatusError as error:
+            errors.append(f"HTTP_{error.response.status_code}")
+            if error.response.status_code < 500 and error.response.status_code not in {
+                408,
+                425,
+                429,
+            }:
+                return
+        except Exception as error:
+            errors.append(type(error).__name__)
 
 
 def _store_refresh(server: str, token: str) -> None:
@@ -1192,25 +1364,11 @@ def run(
     stop = threading.Event()
     heartbeat_error: list[str] = []
 
-    def send_heartbeats() -> None:
-        while not stop.wait(30):
-            try:
-                with httpx.Client(timeout=15) as heartbeat_client:
-                    heartbeat_session = _refresh_session(heartbeat_client, server)
-                    response = heartbeat_client.post(
-                        f"{server}/api/v1/runs/{run_id}/heartbeat",
-                        headers={"Authorization": f"Bearer {heartbeat_session['access_token']}"},
-                    )
-                    response.raise_for_status()
-                    refreshed_logging_token = response.json().get("logging_token")
-                    if not isinstance(refreshed_logging_token, str):
-                        raise RuntimeError("platform omitted the refreshed Run logging token")
-                    token_path.write_text(refreshed_logging_token, encoding="utf-8")
-            except Exception as error:
-                heartbeat_error.append(type(error).__name__)
-                return
-
-    heartbeat_thread = threading.Thread(target=send_heartbeats, daemon=True)
+    heartbeat_thread = threading.Thread(
+        target=_send_run_heartbeats,
+        args=(stop, server, run_id, token_path, heartbeat_error),
+        daemon=True,
+    )
     heartbeat_thread.start()
     child_environment = os.environ.copy()
     child_environment.update(
@@ -1227,6 +1385,7 @@ def run(
         }
     )
     interrupted = False
+    finalization_token = logging_token
     child_command = list(captured_before.command)
     if selection.kind == "container":
         run_index = child_command.index("run")
@@ -1269,7 +1428,9 @@ def run(
         exit_code = 130
     finally:
         stop.set()
-        heartbeat_thread.join(timeout=5)
+        heartbeat_thread.join(timeout=20)
+        if token_path.exists():
+            finalization_token = token_path.read_text(encoding="utf-8").strip()
         token_path.unlink(missing_ok=True)
 
     provenance_problems: list[str] = []
@@ -1312,28 +1473,16 @@ def run(
     elif dvc_experiment_revision is None and workspace_status:
         provenance_status = "incomplete"
     status_value = "interrupted" if interrupted else ("succeeded" if exit_code == 0 else "failed")
-    with httpx.Client(timeout=15) as client:
-        final_session = _refresh_session(client, server)
-        final_headers = _project_headers(final_session)
-        if final_commit == commit_sha and (root / "dvc.yaml").is_file():
-            pipeline_response = client.put(
-                f"{server}/api/v1/projects/{repository['project_id']}/pipeline-versions/resolve",
-                headers=final_headers,
-                json={
-                    "repository_id": repository["repository_id"],
-                    "git_commit_sha": commit_sha,
-                    "pipeline_path": "dvc.yaml",
-                },
-            )
-            pipeline_response.raise_for_status()
-            resolved_pipeline = pipeline_response.json().get("id")
-            if not isinstance(resolved_pipeline, str):
-                raise RuntimeError("platform returned an invalid pipeline version")
-            pipeline_version_id = resolved_pipeline
-        finalized = client.post(
-            f"{server}/api/v1/runs/{run_id}/finalize",
-            headers=final_headers,
-            json={
+    pipeline_resolution = (
+        {
+            "repository_id": repository["repository_id"],
+            "git_commit_sha": commit_sha,
+            "pipeline_path": "dvc.yaml",
+        }
+        if final_commit == commit_sha and (root / "dvc.yaml").is_file()
+        else None
+    )
+    finalization = {
                 "exit_code": exit_code,
                 "status": status_value,
                 "git_commit_sha": commit_sha,
@@ -1342,7 +1491,8 @@ def run(
                 "pipeline_version_id": pipeline_version_id,
                 "environment_specification_id": environment_id,
                 "evidence": {
-                    "heartbeat_error": heartbeat_error[0] if heartbeat_error else None,
+                    "heartbeat_error": heartbeat_error[-1] if heartbeat_error else None,
+                    "heartbeat_error_count": len(heartbeat_error),
                     "client_version": __version__,
                     "input_artifact_version_ids": input_version or [],
                     "secret_context": secret_context,
@@ -1370,9 +1520,25 @@ def run(
                         "problems": provenance_problems,
                     },
                 },
-            },
-        )
-        finalized.raise_for_status()
+            }
+    journal = {
+        "schema": 1,
+        "server": server,
+        "run_id": run_id,
+        "project_id": repository["project_id"],
+        "repository_id": repository["repository_id"],
+        "idempotency_key": secrets.token_urlsafe(24),
+        "pipeline_resolution": pipeline_resolution,
+        "finalization": finalization,
+    }
+    journal_path = _finalization_journal_path(server, run_id)
+    _write_private_json(journal_path, journal)
+    try:
+        _recover_finalization(journal_path, run_token=finalization_token)
+    except Exception as error:
+        typer.echo(f"Run {run_id} could not be finalized: {error}", err=True)
+        typer.echo(f"Recover it with: homebrew-mlflow run-recover {run_id}", err=True)
+        raise typer.Exit(exit_code if exit_code else 1) from error
     typer.echo(f"Run {run_id} finalized as {status_value}.")
     if provenance_status != "complete":
         typer.echo(
@@ -1382,6 +1548,18 @@ def run(
         )
     if exit_code:
         raise typer.Exit(exit_code)
+
+
+@app.command("run-recover")
+def run_recover(run_id: Annotated[str, typer.Argument()]) -> None:
+    """Retry a locally journaled Run finalization without rerunning computation."""
+    path = _find_finalization_journal(run_id)
+    try:
+        result = _recover_finalization(path)
+    except Exception as error:
+        typer.echo(f"Run {run_id} could not be recovered: {error}", err=True)
+        raise typer.Exit(1) from error
+    typer.echo(f"Run {run_id} finalized as {result.get('state', 'terminal')}.")
 
 
 if __name__ == "__main__":

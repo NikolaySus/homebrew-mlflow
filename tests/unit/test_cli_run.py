@@ -5,15 +5,24 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
-from homebrew_mlflow.cli.main import _changed_dvc_experiment, _dvc_lock_output_paths, app
+from homebrew_mlflow.cli.main import (
+    _changed_dvc_experiment,
+    _dvc_lock_output_paths,
+    _recover_finalization,
+    _send_run_heartbeats,
+    _write_private_json,
+    app,
+)
 from homebrew_mlflow.cli.runtime import RuntimeCapture, RuntimeSelection
 from typer.testing import CliRunner
 
 
 class Response:
-    def __init__(self, payload: dict[str, Any]) -> None:
+    def __init__(self, payload: dict[str, Any], status_code: int = 200) -> None:
         self._payload = payload
+        self.status_code = status_code
 
     def raise_for_status(self) -> None:
         return None
@@ -75,6 +84,9 @@ def test_run_preserves_child_success_with_workspace_changes(  # type: ignore[no-
     }
     (tmp_path / ".homebrew-mlflow.json").write_text(json.dumps(context), encoding="utf-8")
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "homebrew_mlflow.cli.main.typer.get_app_dir", lambda _name: str(tmp_path / "app-data")
+    )
     monkeypatch.setattr("homebrew_mlflow.cli.main.httpx.Client", Client)
     monkeypatch.setattr(
         "homebrew_mlflow.cli.main._refresh_session",
@@ -186,3 +198,81 @@ stages:
         "models/model.bin",
         "reports/results.csv",
     ]
+
+
+def test_heartbeat_continues_after_transient_connection_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    attempts = 0
+
+    class HeartbeatClient(Client):
+        def post(self, url: str, **kwargs: Any) -> Response:
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise httpx.ConnectError("offline", request=httpx.Request("POST", url))
+            return Response({"logging_token": "refreshed-token"})
+
+    class StopAfterSuccess:
+        calls = 0
+
+        def wait(self, _timeout: float) -> bool:
+            self.calls += 1
+            return self.calls > 2
+
+    token_path = tmp_path / "token"
+    token_path.write_text("initial-token", encoding="utf-8")
+    monkeypatch.setattr("homebrew_mlflow.cli.main.httpx.Client", HeartbeatClient)
+    monkeypatch.setattr(
+        "homebrew_mlflow.cli.main._refresh_session",
+        lambda _client, _server: {"access_token": "access"},
+    )
+    errors: list[str] = []
+
+    _send_run_heartbeats(StopAfterSuccess(), "https://ml.example", "run_1", token_path, errors)  # type: ignore[arg-type]
+
+    assert attempts == 2
+    assert errors == ["ConnectError"]
+    assert token_path.read_text(encoding="utf-8") == "refreshed-token"
+
+
+def test_finalization_journal_replays_same_key_after_connection_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    attempts: list[dict[str, Any]] = []
+
+    class RecoverClient(Client):
+        def post(self, url: str, **kwargs: Any) -> Response:
+            attempts.append(kwargs)
+            if len(attempts) == 1:
+                raise httpx.ConnectError("offline", request=httpx.Request("POST", url))
+            return Response({"state": "succeeded"})
+
+    path = tmp_path / "pending.json"
+    _write_private_json(
+        path,
+        {
+            "schema": 1,
+            "server": "https://ml.example",
+            "run_id": "run_1",
+            "project_id": "pr_1",
+            "idempotency_key": "stable-key",
+            "pipeline_resolution": None,
+            "finalization": {"exit_code": 0, "status": "succeeded"},
+        },
+    )
+    monkeypatch.setattr("homebrew_mlflow.cli.main.httpx.Client", RecoverClient)
+    monkeypatch.setattr("homebrew_mlflow.cli.main.time.sleep", lambda _delay: None)
+    monkeypatch.setattr(
+        "homebrew_mlflow.cli.main._refresh_session",
+        lambda _client, _server: {"access_token": "access", "project_id": "pr_1"},
+    )
+
+    result = _recover_finalization(path)
+
+    assert result["state"] == "succeeded"
+    assert [request["headers"]["Idempotency-Key"] for request in attempts] == [
+        "stable-key",
+        "stable-key",
+    ]
+    assert not path.exists()

@@ -50,6 +50,31 @@ def mlflow_claims(
     return claims
 
 
+def run_control_claims(
+    run_id: str,
+    authorization: Annotated[str | None, Header()] = None,
+) -> AccessTokenClaims:
+    if authorization is None or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="authentication_required")
+    token = authorization.removeprefix("Bearer ")
+    verifier = access_tokens()
+    try:
+        return verifier.verify(token, TokenAudience.PLATFORM_API)
+    except AccessTokenFailure:
+        pass
+    try:
+        claims = verifier.verify(token, TokenAudience.MLFLOW)
+    except AccessTokenFailure as error:
+        raise HTTPException(status_code=401, detail="invalid_access_token") from error
+    if (
+        claims.run_id is None
+        or str(claims.run_id) != run_id
+        or MachineScope.TRACK not in claims.scopes
+    ):
+        raise HTTPException(status_code=403, detail="run_binding_required")
+    return claims
+
+
 def dvc_claims(
     authorization: Annotated[str | None, Header()] = None,
 ) -> AccessTokenClaims:

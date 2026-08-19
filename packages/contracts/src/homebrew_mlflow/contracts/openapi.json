@@ -575,9 +575,9 @@
     "/api/v1/runs/{run_id}/finalize": {
       "post": {
         "operationId": "finalizeRun", "summary": "Finalize a local Run idempotently", "security": [{"bearerAuth": []}],
-        "parameters": [{"name": "run_id", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "parameters": [{"name": "run_id", "in": "path", "required": true, "schema": {"type": "string"}}, {"name": "Idempotency-Key", "in": "header", "required": false, "schema": {"type": "string", "minLength": 1, "maxLength": 200}}],
         "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/FinalizeRunRequest"}}}},
-        "responses": {"200": {"description": "Run finalized", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/RunResponse"}}}}, "409": {"description": "Different finalization evidence", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorEnvelope"}}}}}
+        "responses": {"200": {"description": "Run finalized or an incomplete Run reconciled", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/RunResponse"}}}}, "403": {"description": "Run creator or project Maintainer required", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorEnvelope"}}}}, "404": {"description": "Run not found", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorEnvelope"}}}}, "409": {"description": "Lifecycle or finalization evidence conflict", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorEnvelope"}}}}, "422": {"description": "Invalid finalization context", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorEnvelope"}}}}}
       }
     },
     "/api/v1/runs/{run_id}/tracking/batch": {

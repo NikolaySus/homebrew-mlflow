@@ -15,12 +15,14 @@ from homebrew_mlflow.application import (
 from homebrew_mlflow.domain import Principal, PrincipalKind
 from homebrew_mlflow.infrastructure import FileSystemRepositoryTemplate
 from homebrew_mlflow.infrastructure.database import (
+    AuditEventRow,
     Base,
     GitRepositoryRow,
     PrincipalRow,
     ResearchProjectRow,
     RunMetricRow,
     RunParameterRow,
+    RunRow,
     RunTagRow,
     SqlAlchemyProvisioningStore,
 )
@@ -286,11 +288,19 @@ def test_authenticated_user_claims_installation_once(monkeypatch) -> None:  # ty
         assert session.scalar(select(func.count()).select_from(RunParameterRow)) == 1
         assert session.scalar(select(func.count()).select_from(RunMetricRow)) == 2
         assert session.scalar(select(func.count()).select_from(RunTagRow)) == 1
-    heartbeat = client.post(f"/api/v1/runs/{run.json()['id']}/heartbeat", headers=headers)
+    heartbeat = client.post(
+        f"/api/v1/runs/{run.json()['id']}/heartbeat", headers=logging_headers
+    )
     assert heartbeat.status_code == 200
+    with Session(engine) as session:
+        row = session.scalar(select(RunRow).where(RunRow.public_id == run.json()["id"]))
+        assert row is not None
+        row.state = "incomplete"
+        row.ended_at = datetime.now(UTC)
+        session.commit()
     finalized = client.post(
         f"/api/v1/runs/{run.json()['id']}/finalize",
-        headers=headers,
+        headers={**logging_headers, "Idempotency-Key": "acceptance-finalization"},
         json={
             "exit_code": 0,
             "status": "succeeded",
@@ -300,6 +310,32 @@ def test_authenticated_user_claims_installation_once(monkeypatch) -> None:  # ty
     )
     assert finalized.status_code == 200
     assert finalized.json()["state"] == "succeeded"
+    conflicting = client.post(
+        f"/api/v1/runs/{run.json()['id']}/finalize",
+        headers={**headers, "Idempotency-Key": "acceptance-finalization"},
+        json={
+            "exit_code": 1,
+            "status": "failed",
+            "git_commit_sha": "a" * 40,
+            "evidence": {"dvc": {"revision": "different"}},
+        },
+    )
+    assert conflicting.status_code == 409
+    missing = client.post(
+        "/api/v1/runs/not-a-run/finalize",
+        headers=headers,
+        json={"exit_code": 0, "status": "succeeded"},
+    )
+    assert missing.status_code == 404
+    with Session(engine) as session:
+        row = session.scalar(select(RunRow).where(RunRow.public_id == run.json()["id"]))
+        assert row is not None
+        assert row.finalization_idempotency_key == "acceptance-finalization"
+        assert session.scalar(
+            select(func.count()).select_from(AuditEventRow).where(
+                AuditEventRow.action == "run.reconcile"
+            )
+        ) == 1
 
     repeated = client.post(
         "/api/v1/setup/claim",

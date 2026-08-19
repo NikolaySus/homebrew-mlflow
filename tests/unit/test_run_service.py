@@ -54,17 +54,23 @@ class MemoryRunUnitOfWork:
     def run(self, run_id: PublicId) -> Run | None:
         return self.runs.get(run_id)
 
+    def run_for_update(self, run_id: PublicId) -> Run | None:
+        return self.run(run_id)
+
     def save_run(self, run: Run) -> None:
         self.runs[run.id] = run
 
-    def stale_running_runs(self, heartbeat_before: datetime) -> tuple[Run, ...]:
-        return tuple(
+    def mark_stale_runs_incomplete(self, heartbeat_before: datetime, now: datetime) -> int:
+        stale = tuple(
             run
             for run in self.runs.values()
             if run.state is RunState.RUNNING
             and run.heartbeat_at is not None
             and run.heartbeat_at < heartbeat_before
         )
+        for run in stale:
+            self.runs[run.id] = run.mark_incomplete(now)
+        return len(stale)
 
     def experiments_for_project(
         self, project_id: PublicId, *, include_archived: bool
@@ -163,6 +169,34 @@ def test_recovery_marks_only_stale_running_runs_incomplete() -> None:
     assert recovered == 1
     assert uow.runs[run.id].state is RunState.INCOMPLETE
     assert uow.runs[run.id].ended_at == started + timedelta(minutes=6)
+
+
+def test_creator_reconciles_incomplete_run_without_reopening_it() -> None:
+    actor, project, repository, uow = fixture()
+    started = datetime(2026, 8, 17, 10, tzinfo=UTC)
+    service = RunService(uow)
+    run = service.create(
+        actor, CreateRun(project, repository, "baseline", ("python", "train.py"), started)
+    )
+    service.recover_incomplete(started + timedelta(minutes=6), timedelta(minutes=5))
+
+    finished = service.finalize(
+        actor,
+        FinalizeRun(
+            run.id,
+            0,
+            RunState.SUCCEEDED,
+            "a" * 40,
+            {},
+            started + timedelta(minutes=7),
+            idempotency_key="stable-key",
+            request_id=PublicId.generate(ResourceKind.REQUEST),
+        ),
+    )
+
+    assert finished.state is RunState.SUCCEEDED
+    assert finished.finalization_idempotency_key == "stable-key"
+    assert uow.audits[-1].action == "run.reconcile"
 
 
 def test_maintainer_archives_experiment_and_future_runs_are_rejected() -> None:

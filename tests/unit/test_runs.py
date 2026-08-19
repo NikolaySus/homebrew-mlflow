@@ -50,3 +50,19 @@ def test_run_tracks_heartbeat_and_immutable_terminal_evidence() -> None:
     assert finished.finalization_digest == "a" * 64
     with pytest.raises(InvalidRunTransition):
         finished.heartbeat(now)
+
+
+def test_incomplete_run_can_only_reconcile_toward_finalization() -> None:
+    now = datetime(2026, 8, 17, tzinfo=UTC)
+    incomplete = Run.create(
+        PublicId.generate(ResourceKind.PROJECT),
+        PublicId.generate(ResourceKind.EXPERIMENT),
+        PublicId.generate(ResourceKind.REPOSITORY),
+        PublicId.generate(ResourceKind.PRINCIPAL),
+        ("train",),
+        now,
+    ).start(now).mark_incomplete(now)
+
+    assert incomplete.begin_reconciliation().state is RunState.FINALIZING
+    with pytest.raises(InvalidRunTransition):
+        incomplete.begin_finalization()

@@ -3,11 +3,14 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
 from homebrew_mlflow.application import (
     AccessTokenClaims,
+    AuthorizationDenied,
     CreateRun,
     FinalizeRun,
+    ResourceConflict,
+    RunNotFound,
     RunService,
     TokenAudience,
     TrackingService,
@@ -28,7 +31,7 @@ from homebrew_mlflow.infrastructure import (
 )
 from pydantic import BaseModel, ConfigDict, Field
 
-from .security import access_tokens, platform_claims
+from .security import access_tokens, platform_claims, run_control_claims
 from .settings import get_settings
 from .tracking import MetricInput, ParameterInput, TagInput
 
@@ -309,7 +312,7 @@ def get_run(
 @router.post("/api/v1/runs/{run_id}/heartbeat", response_model=RunResponse)
 def heartbeat(
     run_id: str,
-    claims: Annotated[AccessTokenClaims, Depends(platform_claims)],
+    claims: Annotated[AccessTokenClaims, Depends(run_control_claims)],
 ) -> RunResponse:
     try:
         parsed_run = PublicId(ResourceKind.RUN, run_id)
@@ -321,7 +324,7 @@ def heartbeat(
             run = RunService(SqlAlchemyRunUnitOfWork(session)).heartbeat(
                 claims.principal_id, parsed_run, datetime.now(UTC)
             )
-        except ValueError as error:
+        except RunNotFound as error:
             raise HTTPException(status_code=404, detail="run_not_found") from error
     logging_token = access_tokens().issue(
         claims.principal_id,
@@ -338,7 +341,11 @@ def heartbeat(
 def finalize(
     run_id: str,
     body: FinalizeRunRequest,
-    claims: Annotated[AccessTokenClaims, Depends(platform_claims)],
+    request: Request,
+    claims: Annotated[AccessTokenClaims, Depends(run_control_claims)],
+    idempotency_key: Annotated[
+        str | None, Header(alias="Idempotency-Key", min_length=1, max_length=200)
+    ] = None,
 ) -> RunResponse:
     inferred_provenance = (
         RunProvenanceStatus.COMPLETE
@@ -347,6 +354,9 @@ def finalize(
     )
     try:
         parsed_run = PublicId(ResourceKind.RUN, run_id)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail="run_not_found") from error
+    try:
         pipeline_version = (
             PublicId(ResourceKind.PIPELINE_VERSION, body.pipeline_version_id)
             if body.pipeline_version_id
@@ -361,7 +371,7 @@ def finalize(
             else None
         )
     except ValueError as error:
-        raise HTTPException(status_code=404, detail="run_not_found") from error
+        raise HTTPException(status_code=422, detail="invalid_run_finalization") from error
     with create_session(get_settings().database_url) as session:
         try:
             run = RunService(SqlAlchemyRunUnitOfWork(session)).finalize(
@@ -380,8 +390,14 @@ def finalize(
                     else inferred_provenance,
                     body.dvc_experiment_revision,
                     body.provenance_status is not None,
+                    idempotency_key,
+                    PublicId(ResourceKind.REQUEST, request.state.request_id),
                 ),
             )
-        except ValueError as error:
+        except RunNotFound as error:
             raise HTTPException(status_code=404, detail="run_not_found") from error
+        except (AuthorizationDenied, ResourceConflict):
+            raise
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail="invalid_run_finalization") from error
     return _response(run)

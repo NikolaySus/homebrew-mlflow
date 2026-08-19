@@ -45,9 +45,11 @@ class RunUnitOfWork(Protocol):
 
     def run(self, run_id: PublicId) -> Run | None: ...
 
+    def run_for_update(self, run_id: PublicId) -> Run | None: ...
+
     def save_run(self, run: Run) -> None: ...
 
-    def stale_running_runs(self, heartbeat_before: datetime) -> tuple[Run, ...]: ...
+    def mark_stale_runs_incomplete(self, heartbeat_before: datetime, now: datetime) -> int: ...
 
     def runs_for_project(self, project_id: PublicId) -> tuple[Run, ...]: ...
 
@@ -99,6 +101,12 @@ class FinalizeRun:
     provenance_status: RunProvenanceStatus = RunProvenanceStatus.COMPLETE
     dvc_experiment_revision: str | None = None
     provenance_explicit: bool = True
+    idempotency_key: str | None = None
+    request_id: PublicId | None = None
+
+
+class RunNotFound(ValueError):
+    pass
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,30 +166,37 @@ class RunService:
         return run
 
     def heartbeat(self, actor_id: PublicId, run_id: PublicId, occurred_at: datetime) -> Run:
-        run = self._required_run(run_id)
+        run = self._required_run(run_id, for_update=True)
         self._authorize_run_actor(actor_id, run)
-        updated = run.heartbeat(occurred_at)
+        try:
+            updated = run.heartbeat(occurred_at)
+        except ValueError as error:
+            raise ResourceConflict(str(error)) from error
         self._uow.save_run(updated)
         self._uow.commit()
         return updated
 
     def finalize(self, actor_id: PublicId, command: FinalizeRun) -> Run:
-        run = self._required_run(command.run_id)
+        run = self._required_run(command.run_id, for_update=True)
         self._authorize_run_actor(actor_id, run)
+        if command.idempotency_key is not None and not 1 <= len(command.idempotency_key) <= 200:
+            raise ValueError("idempotency key must contain 1 to 200 characters")
         valid_pipeline = command.pipeline_version_id is None or (
             self._uow.pipeline_version_belongs_to_project(
                 command.pipeline_version_id, run.project_id
             )
         )
         if not valid_pipeline:
-            raise ValueError("Pipeline Version is not active in the selected project")
+            raise ResourceConflict("Pipeline Version is not active in the selected project")
         valid_environment = command.environment_specification_id is None or (
             self._uow.environment_belongs_to_project(
                 command.environment_specification_id, run.project_id
             )
         )
         if not valid_environment:
-            raise ValueError("Environment Specification is not active in the selected project")
+            raise ResourceConflict(
+                "Environment Specification is not active in the selected project"
+            )
         digest_document = {
             "exit_code": command.exit_code,
             "status": command.status.value,
@@ -217,7 +232,16 @@ class RunService:
             if run.finalization_digest != digest:
                 raise ResourceConflict("Run was finalized with different evidence")
             return run
-        updated = run.begin_finalization().finish(
+        if run.state is RunState.INCOMPLETE:
+            finalizing = run.begin_reconciliation()
+            reconciled = True
+        else:
+            try:
+                finalizing = run.begin_finalization()
+            except ValueError as error:
+                raise ResourceConflict(str(error)) from error
+            reconciled = False
+        updated = finalizing.finish(
             command.status,
             command.occurred_at,
             exit_code=command.exit_code,
@@ -228,6 +252,7 @@ class RunService:
             evidence=command.evidence,
             pipeline_version_id=command.pipeline_version_id,
             environment_specification_id=command.environment_specification_id,
+            finalization_idempotency_key=command.idempotency_key,
         )
         input_values = command.evidence.get("input_artifact_version_ids", [])
         if not isinstance(input_values, list) or not all(
@@ -245,18 +270,32 @@ class RunService:
                 raise AuthorizationDenied("input Artifact Version is not available to the Run")
             self._uow.add_run_input(run.id, version_id, command.occurred_at)
         self._uow.save_run(updated)
+        if reconciled:
+            if command.request_id is None:
+                raise ValueError("Run reconciliation requires a request identifier")
+            self._uow.append_audit(
+                AuditEvent(
+                    actor_principal_id=actor_id,
+                    action="run.reconcile",
+                    resource_type="run",
+                    resource_id=run.id,
+                    outcome="success",
+                    request_id=command.request_id,
+                    project_id=run.project_id,
+                    safe_metadata={"terminal_state": command.status.value},
+                    occurred_at=command.occurred_at,
+                )
+            )
         self._uow.commit()
         return updated
 
     def recover_incomplete(self, now: datetime, heartbeat_timeout: timedelta) -> int:
         if heartbeat_timeout <= timedelta(0):
             raise ValueError("heartbeat timeout must be positive")
-        stale = self._uow.stale_running_runs(now - heartbeat_timeout)
-        for run in stale:
-            self._uow.save_run(run.mark_incomplete(now))
-        if stale:
+        recovered = self._uow.mark_stale_runs_incomplete(now - heartbeat_timeout, now)
+        if recovered:
             self._uow.commit()
-        return len(stale)
+        return recovered
 
     def list_project(self, actor_id: PublicId, project_id: PublicId) -> tuple[Run, ...]:
         role = self._uow.project_role(project_id, actor_id)
@@ -312,10 +351,10 @@ class RunService:
             raise AuthorizationDenied("project membership is required")
         return RunProvenance(run, self._uow.run_inputs(run.id), self._uow.run_outputs(run.id))
 
-    def _required_run(self, run_id: PublicId) -> Run:
-        run = self._uow.run(run_id)
+    def _required_run(self, run_id: PublicId, *, for_update: bool = False) -> Run:
+        run = self._uow.run_for_update(run_id) if for_update else self._uow.run(run_id)
         if run is None:
-            raise ValueError("Run does not exist")
+            raise RunNotFound("Run does not exist")
         return run
 
     def _authorize_run_actor(self, actor_id: PublicId, run: Run) -> None:

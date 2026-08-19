@@ -5,6 +5,42 @@ User command mistakes and problems caused solely by an outdated local CLI are in
 
 ## 2026-08-19
 
+### Managed Run finalization can fail after a successful DVC experiment
+
+**State:** Open in CLI 0.2.5.
+
+Run `run_01M0C7RWTXKGB3ZJ04Z7WK1Y0K` completed the unchanged CUDA CatBoost training plus diagnostic
+outputs, and DVC created named experiment revision `ab7f7531f783a2cde30a7b5e02a418d03dfa95bd` with hashes
+for all seven declared outputs. The wrapper then warned that none of those hashes could be found in the
+workspace and failed with HTTP 404 from `/api/v1/runs/run_01M0C7RWTXKGB3ZJ04Z7WK1Y0K/finalize`. The command
+therefore returned exit code one even though the DVC revision and all local cache objects remained intact.
+
+Expected: the finalize endpoint should accept an existing active Run, resolve provenance from the completed
+named DVC experiment revision, and return a durable succeeded or failed response. A missing Run should be
+diagnosed before the 36-minute child process executes, or finalization should recover without losing the
+completed experiment association.
+
+Reproduction: Run `run_01M0CBRRCHZ64BD0ZNR2DDK3AH` completed a 49-minute hurdle CatBoost stage and DVC
+created revision `ec21bfba0195632f3b530c0930ee7c8466cd823a` with all seven output hashes. Finalization again
+reported every output hash missing from the workspace, then failed during its API request with
+`ConnectError: [Errno 11001] getaddrinfo failed`. Two pre-run `doctor` attempts had also timed out before a
+third reported `readiness=ok`. The completed DVC state survived, but the wrapper has no retry or resumable
+finalization path for transient control-plane failures after expensive local work.
+
+### Temporary DVC experiments lose output hashes during Run finalization
+
+**State:** Open in CLI 0.2.5.
+
+Successful managed Runs that execute `dvc exp run --temp` create complete named DVC experiment revisions,
+but finalization warns that every declared output lacks file hash information. The warning paths point into
+the already-removed `.dvc/tmp/exps/standalone/...` checkout rather than resolving hashes from the new DVC
+experiment revision. This reproduced for base Run `run_01M0BNSS0M3YH5KRBERT6WV566`, global Run
+`run_01M0BNT8W6V5DRG668BJ8KA1ND`, and correlation Run `run_01M0BQADP4R40BXVG0XMDC7SK1`.
+
+Expected: finalization should resolve output hashes from the recorded DVC experiment revision, including
+temporary experiments whose executor checkout is removed before the wrapper captures provenance. A
+successful temporary Run should not depend on the former executor path remaining materialized.
+
 ### Repository v4 to v5 migration cannot match the generated lockfile
 
 **State:** Resolved in CLI 0.2.5.
@@ -24,9 +60,10 @@ template sentinel changes intended by CLI 0.2.4 were applied manually. `uv lock 
 `uv sync --frozen` succeeded, and `homebrew-mlflow doctor` then reported `mlflow_client_auth=ok`,
 `mlflow_auth_boundary=ok`, `dvc_remote=ok`, and `readiness=ok`.
 
-Fix verification: the v4-to-v5 migration now derives the rendered package index and wheel URLs from the
-normalized repository `server` value. Regression coverage uses `https://ml.example` in the old lock rather
-than an unrendered template placeholder and verifies the managed pin, wheel, requirement, and sentinel update.
+Fix verification: CLI 0.2.5 reads the rendered service URL from `.homebrew-mlflow.json` and uses it when
+matching both managed `uv.lock` fragments. An isolated in-memory migration using the exact former
+`https://ml.spkya.ru` v4 package block and requirement upgraded the package version, wheel URL, wheel hash,
+and locked requirement successfully. The live v5 repository continues to report `readiness=ok`.
 
 ### Successful Run warns that all declared DVC outputs lack hashes
 
@@ -55,7 +92,7 @@ pipeline up to date, and `dvc status -c -r platform` reported the cache and remo
 
 ### Successful DVC push emits a credential-refresh traceback
 
-**State:** Not reproduced with CLI 0.2.3; long-transfer resolution remains unconfirmed.
+**State:** Resolved by CLI 0.2.5.
 
 An approved five-object `dvc push` completed and returned exit code zero, but afterward aiobotocore attempted
 an advisory credential refresh and printed a full `CredentialRetrievalError` traceback caused by a TLS
@@ -66,9 +103,10 @@ Expected: advisory refresh should retry or fail quietly after a completed transf
 network errors should be summarized without a multi-page traceback that makes a successful upload appear
 failed.
 
-Recheck: direct credential issuance and `dvc status -c -r platform` both completed without a traceback under
-CLI 0.2.3. These short operations do not enter the same advisory-refresh window as the original 41-second
-upload, so another long transfer is required before marking the issue resolved.
+Verification: an approved named-experiment transfer under CLI 0.2.5 uploaded 27 files in 48.9 seconds with
+`uv run --frozen dvc exp push origin catboost-base-cuda-final catboost-global-trend-cuda
+catboost-user-correlation-cuda -r platform -j 2`. The command exited zero without a credential-refresh
+traceback. All three experiment refs were present on `origin` at their expected immutable DVC revisions.
 
 ### Direct MLflow tracking is unusable from a managed Run
 

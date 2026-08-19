@@ -367,6 +367,12 @@ V1 implementation defaults:
 - the creating principal or a project Maintainer may reconcile an `INCOMPLETE` Run;
 - rerunning computation creates a new Run linked by `retry_of_run_id` rather than reopening the old one.
 
+Transient heartbeat failures do not stop the coordinator's heartbeat loop. After local computation, the
+coordinator durably journals token-free finalization evidence before contacting the control plane, retries
+transient failures with one idempotency key, and retains the journal for explicit recovery if connectivity
+does not return. Reconciliation moves an `INCOMPLETE` Run directly to finalization and a terminal state; it
+never reopens the Run for tracking or computation.
+
 DVC experiment revisions may be recorded for exploration. Archival publication still requires immutable committed state available from the hosted Git origin.
 
 ## 11. MLflow compatibility boundary
@@ -686,6 +692,7 @@ Required commands:
 | `homebrew-mlflow doctor` | Verify platform session, repository/project mapping, MLflow service health, repository-runtime request-auth plugin loading, the tracking authentication boundary using a non-secret invalid token with retries disabled, the repository-pinned DVC executable and remote, and enabled Infisical CLI/version/session/access; never print secrets or mutate the remote |
 | `homebrew-mlflow repository configure` | Preflight and apply safe versioned migrations to platform-managed repository instructions/context, reconcile DVC/AWS configuration and standard local DVC ignores, install the generated AWS profile, and report tracked files that the researcher must review and commit |
 | `homebrew-mlflow run -- ...` | Create/finalize a local Run, supply scoped credentials, optionally wrap with `infisical run` |
+| `homebrew-mlflow run-recover RUN_ID` | Replay a locally journaled Run finalization without rerunning computation |
 | `homebrew-mlflow logout` | Revoke current platform refresh family and remove local credential; do not silently log out Infisical |
 
 Narrow hidden or machine-readable subcommands MAY provide platform tokens and AWS `credential_process` output. They are protocol adapters, not new user workflows.

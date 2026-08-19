@@ -81,6 +81,7 @@ from sqlalchemy import (
     or_,
     select,
     text,
+    update,
 )
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
@@ -287,6 +288,7 @@ class RunRow(Base):
     provenance_status: Mapped[str] = mapped_column(String(24), default="pending")
     dvc_experiment_revision: Mapped[str | None] = mapped_column(String(40))
     finalization_evidence: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    finalization_idempotency_key: Mapped[str | None] = mapped_column(String(200))
 
 
 class RunArtifactInputRow(Base):
@@ -2133,11 +2135,21 @@ class SqlAlchemyRunUnitOfWork:
                 provenance_status=run.provenance_status.value,
                 dvc_experiment_revision=run.dvc_experiment_revision,
                 finalization_evidence=run.finalization_evidence,
+                finalization_idempotency_key=run.finalization_idempotency_key,
             )
         )
 
     def run(self, run_id: PublicId) -> Run | None:
-        row = self._session.scalar(select(RunRow).where(RunRow.public_id == str(run_id)))
+        return self._load_run(run_id, for_update=False)
+
+    def run_for_update(self, run_id: PublicId) -> Run | None:
+        return self._load_run(run_id, for_update=True)
+
+    def _load_run(self, run_id: PublicId, *, for_update: bool) -> Run | None:
+        query = select(RunRow).where(RunRow.public_id == str(run_id))
+        if for_update:
+            query = query.with_for_update()
+        row = self._session.scalar(query)
         if row is None:
             return None
         project_public_id = self._session.scalar(
@@ -2207,6 +2219,7 @@ class SqlAlchemyRunUnitOfWork:
             PublicId(ResourceKind.ENVIRONMENT_SPECIFICATION, environment_public_id)
             if environment_public_id
             else None,
+            row.finalization_idempotency_key,
         )
 
     def save_run(self, run: Run) -> None:
@@ -2223,6 +2236,7 @@ class SqlAlchemyRunUnitOfWork:
         row.provenance_status = run.provenance_status.value
         row.dvc_experiment_revision = run.dvc_experiment_revision
         row.finalization_evidence = run.finalization_evidence
+        row.finalization_idempotency_key = run.finalization_idempotency_key
         row.pipeline_version_id = (
             self._key(PipelineVersionRow, run.pipeline_version_id)
             if run.pipeline_version_id is not None
@@ -2306,19 +2320,17 @@ class SqlAlchemyRunUnitOfWork:
                 )
             )
 
-    def stale_running_runs(self, heartbeat_before: datetime) -> tuple[Run, ...]:
-        public_ids = self._session.scalars(
-            select(RunRow.public_id).where(
+    def mark_stale_runs_incomplete(self, heartbeat_before: datetime, now: datetime) -> int:
+        result = self._session.execute(
+            update(RunRow)
+            .where(
                 RunRow.state == RunState.RUNNING.value,
                 RunRow.heartbeat_at < heartbeat_before,
             )
+            .values(state=RunState.INCOMPLETE.value, ended_at=now)
+            .returning(RunRow.id)
         )
-        runs = tuple(
-            run
-            for public_id in public_ids
-            if (run := self.run(PublicId(ResourceKind.RUN, public_id))) is not None
-        )
-        return runs
+        return len(tuple(result.scalars()))
 
     def runs_for_project(self, project_id: PublicId) -> tuple[Run, ...]:
         project_key = self._key(ResearchProjectRow, project_id)
