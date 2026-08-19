@@ -38,6 +38,10 @@ class TrackingUnitOfWork(Protocol):
 
     def list_tags(self, run_id: PublicId) -> tuple[RunTag, ...]: ...
 
+    def tracking_snapshots_for_project(
+        self, project_id: PublicId
+    ) -> tuple[TrackingSnapshot, ...]: ...
+
     def commit(self) -> None: ...
 
 
@@ -147,6 +151,14 @@ class TrackingService:
             self._uow.list_metrics(run_id),
             self._uow.list_tags(run_id),
         )
+
+    def project_snapshots(
+        self, actor_id: PublicId, project_id: PublicId
+    ) -> tuple[TrackingSnapshot, ...]:
+        role = self._uow.project_role(project_id, actor_id)
+        if role is None or not permits(role, MachineScope.READ):
+            raise AuthorizationDenied("project membership is required")
+        return self._uow.tracking_snapshots_for_project(project_id)
 
     def _authorized_run(self, actor_id: PublicId, run_id: PublicId, project_id: PublicId) -> Run:
         run = self._uow.run(run_id)

@@ -41,6 +41,12 @@ from .memberships import (
     ProjectMembershipService,
     ProjectMembershipView,
 )
+from .mlflow_sessions import (
+    MlflowBrowserSessionService,
+    MlflowBrowserSessionStore,
+    NewMlflowBrowserSession,
+    ResolvedMlflowBrowserSession,
+)
 from .organization_memberships import (
     OrganizationMembershipService,
     OrganizationMembershipUnitOfWork,
@@ -159,6 +165,10 @@ __all__ = [
     "ProjectRoleView",
     "MachineCredentialStore",
     "MembershipUnitOfWork",
+    "MlflowBrowserSessionService",
+    "MlflowBrowserSessionStore",
+    "NewMlflowBrowserSession",
+    "ResolvedMlflowBrowserSession",
     "ProjectMembershipService",
     "ProjectMembershipView",
     "OrganizationMembershipService",

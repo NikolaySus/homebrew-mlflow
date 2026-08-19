@@ -1,24 +1,38 @@
 from __future__ import annotations
 
+import base64
+import json
 from typing import Any
 
 import pytest
+from flask import Flask
 from homebrew_mlflow.mlflow_plugins.request_auth import HomebrewTokenFileAuthProvider
 from homebrew_mlflow.mlflow_plugins.tracking_store import HomebrewTrackingStore
 from mlflow.entities import Metric, Param, RunTag
 from mlflow.exceptions import MlflowException
+from mlflow.utils.workspace_context import (
+    clear_server_request_workspace,
+    set_server_request_workspace,
+)
 from requests import Request
 
 
 class Response:
-    def __init__(self, payload: dict[str, Any] | None = None) -> None:
+    def __init__(self, payload: Any = None) -> None:
         self._payload = payload or {}
+        self.ok = True
+        self.status_code = 200
 
     def raise_for_status(self) -> None:
         return None
 
-    def json(self) -> dict[str, Any]:
+    def json(self) -> Any:
         return self._payload
+
+
+def _token(payload: dict[str, Any]) -> str:
+    encoded = base64.urlsafe_b64encode(json.dumps(payload).encode()).rstrip(b"=").decode()
+    return f"header.{encoded}.signature"
 
 
 def test_tracking_store_translates_pinned_mlflow_entities(monkeypatch) -> None:  # type: ignore[no-untyped-def]
@@ -88,3 +102,59 @@ def test_tracking_store_missing_request_auth_is_unauthorized(monkeypatch) -> Non
         HomebrewTrackingStore("homebrew://platform").get_run("run_test")
 
     assert caught.value.error_code == "CUSTOMER_UNAUTHORIZED"
+
+
+def test_tracking_store_searches_browser_workspace(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setenv("HOMEBREW_MLFLOW_PLATFORM_INTERNAL_URL", "http://api:8000")
+    workspace = "pr-01k00000000000000000000000"
+    payload = {
+        "workspace": {"name": workspace},
+        "experiments": [
+            {
+                "id": "exp_01K00000000000000000000000",
+                "name": "baseline",
+                "created_at": "2026-08-17T12:00:00Z",
+                "archived_at": None,
+                "last_update_at": "2026-08-17T13:00:00Z",
+            }
+        ],
+        "runs": [
+            {
+                "id": "run_01K00000000000000000000000",
+                "experiment_id": "exp_01K00000000000000000000000",
+                "creator_principal_id": "principal_01K00000000000000000000000",
+                "state": "succeeded",
+                "created_at": "2026-08-17T12:00:00Z",
+                "started_at": "2026-08-17T12:00:00Z",
+                "ended_at": "2026-08-17T13:00:00Z",
+                "attachment_uri": "homebrew://run_01K00000000000000000000000",
+                "parameters": [{"key": "seed", "value": "42"}],
+                "metrics": [{"key": "loss", "value": 0.25, "timestamp_ms": 2, "step": 1}],
+                "tags": [{"key": "model", "value": "resnet"}],
+            }
+        ],
+    }
+    monkeypatch.setattr(
+        "homebrew_mlflow.mlflow_plugins.tracking_store.requests.get",
+        lambda *_args, **_kwargs: Response(payload),
+    )
+    app = Flask(__name__)
+    authorization = _token(
+        {"scp": ["read"], "prj": "pr_01K00000000000000000000000"}
+    )
+    with app.test_request_context(headers={"Authorization": f"Bearer {authorization}"}):
+        set_server_request_workspace(workspace)
+        try:
+            experiments = HomebrewTrackingStore("homebrew://platform").search_experiments(
+                max_results=25,
+                filter_string="tags.`mlflow.experiment.isGateway` IS NULL",
+                order_by=["last_update_time DESC"],
+            )
+            runs = HomebrewTrackingStore("homebrew://platform").search_runs(
+                ["exp_01K00000000000000000000000"], None, 1, max_results=10
+            )
+        finally:
+            clear_server_request_workspace()
+    assert [item.name for item in experiments] == ["baseline"]
+    assert runs[0].data.metrics == {"loss": 0.25}
+    assert runs[0].data.params == {"seed": "42"}

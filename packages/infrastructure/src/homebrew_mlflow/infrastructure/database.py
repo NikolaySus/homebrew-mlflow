@@ -9,16 +9,19 @@ from homebrew_mlflow.application import (
     AuditEventView,
     HostedNamespace,
     MeView,
+    NewMlflowBrowserSession,
     NewRefreshCredential,
     OrganizationPrincipalView,
     OrganizationRoleView,
     ProjectMembershipView,
     ProjectRoleView,
     RepositoryProvisioningJob,
+    ResolvedMlflowBrowserSession,
     RetentionDependencies,
     RotationResult,
     RotationStatus,
     StoredMachineCredential,
+    TrackingSnapshot,
     ValidatedFile,
     ValidatedPublication,
     artifact_version_from_validation,
@@ -372,6 +375,20 @@ class HumanRefreshCredentialRow(Base):
     issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class MlflowBrowserSessionRow(Base):
+    __tablename__ = "mlflow_browser_sessions"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    digest: Mapped[str] = mapped_column(String(64), unique=True)
+    principal_id: Mapped[UUID] = mapped_column(ForeignKey("principals.id"), index=True)
+    default_project_id: Mapped[UUID] = mapped_column(
+        ForeignKey("research_projects.id"), index=True
+    )
+    issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
@@ -2502,6 +2519,60 @@ class SqlAlchemyTrackingUnitOfWork(SqlAlchemyRunUnitOfWork):
         )
         return tuple(RunTag(run_id, row.key, row.value, row.updated_at) for row in rows)
 
+    def tracking_snapshots_for_project(
+        self, project_id: PublicId
+    ) -> tuple[TrackingSnapshot, ...]:
+        runs = self.runs_for_project(project_id)
+        parameters: dict[PublicId, list[RunParameter]] = {run.id: [] for run in runs}
+        metrics: dict[PublicId, list[RunMetric]] = {run.id: [] for run in runs}
+        tags: dict[PublicId, list[RunTag]] = {run.id: [] for run in runs}
+        project_key = self._key(ResearchProjectRow, project_id)
+        parameter_rows = self._session.execute(
+            select(RunRow.public_id, RunParameterRow)
+            .join(RunParameterRow, RunParameterRow.run_id == RunRow.id)
+            .where(RunRow.project_id == project_key)
+            .order_by(RunRow.public_id, RunParameterRow.key)
+        )
+        for run_value, row in parameter_rows:
+            run_id = PublicId(ResourceKind.RUN, run_value)
+            parameters[run_id].append(RunParameter(run_id, row.key, row.value, row.logged_at))
+        metric_rows = self._session.execute(
+            select(RunRow.public_id, RunMetricRow)
+            .join(RunMetricRow, RunMetricRow.run_id == RunRow.id)
+            .where(RunRow.project_id == project_key)
+            .order_by(RunRow.public_id, RunMetricRow.sequence)
+        )
+        for run_value, row in metric_rows:
+            run_id = PublicId(ResourceKind.RUN, run_value)
+            metrics[run_id].append(
+                RunMetric(
+                    run_id,
+                    row.key,
+                    row.value,
+                    row.timestamp_ms,
+                    row.step,
+                    row.logged_at,
+                )
+            )
+        tag_rows = self._session.execute(
+            select(RunRow.public_id, RunTagRow)
+            .join(RunTagRow, RunTagRow.run_id == RunRow.id)
+            .where(RunRow.project_id == project_key)
+            .order_by(RunRow.public_id, RunTagRow.key)
+        )
+        for run_value, row in tag_rows:
+            run_id = PublicId(ResourceKind.RUN, run_value)
+            tags[run_id].append(RunTag(run_id, row.key, row.value, row.updated_at))
+        return tuple(
+            TrackingSnapshot(
+                run,
+                tuple(parameters[run.id]),
+                tuple(metrics[run.id]),
+                tuple(tags[run.id]),
+            )
+            for run in runs
+        )
+
 
 class SqlAlchemyAttachmentUnitOfWork(SqlAlchemyRunUnitOfWork):
     def attachment(self, run_id: PublicId, path: str) -> RunAttachment | None:
@@ -3479,6 +3550,93 @@ class SqlAlchemyRefreshCredentialStore:
             .where(HumanRefreshCredentialRow.digest == digest)
         )
         return PublicId(ResourceKind.PRINCIPAL, value) if value is not None else None
+
+
+class SqlAlchemyMlflowBrowserSessionStore:
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def project_role(self, project_id: PublicId, principal_id: PublicId) -> ProjectRole | None:
+        state = self._session.scalar(
+            select(ResearchProjectRow.state).where(
+                ResearchProjectRow.public_id == str(project_id)
+            )
+        )
+        if state != ProjectState.ACTIVE.value:
+            return None
+        return SqlAlchemyRunUnitOfWork(self._session).project_role(project_id, principal_id)
+
+    def add_mlflow_browser_session(self, session: NewMlflowBrowserSession) -> None:
+        principal_key = self._session.scalar(
+            select(PrincipalRow.id).where(PrincipalRow.public_id == str(session.principal_id))
+        )
+        project_key = self._session.scalar(
+            select(ResearchProjectRow.id).where(
+                ResearchProjectRow.public_id == str(session.default_project_id)
+            )
+        )
+        if principal_key is None or project_key is None:
+            raise ValueError("MLflow browser session refers to a missing resource")
+        self._session.execute(
+            delete(MlflowBrowserSessionRow).where(
+                MlflowBrowserSessionRow.expires_at <= session.issued_at
+            )
+        )
+        self._session.add(
+            MlflowBrowserSessionRow(
+                id=uuid4(),
+                digest=session.digest,
+                principal_id=principal_key,
+                default_project_id=project_key,
+                issued_at=session.issued_at,
+                expires_at=session.expires_at,
+                revoked_at=None,
+            )
+        )
+        self._session.commit()
+
+    def resolve_mlflow_browser_session(
+        self, digest: str, now: datetime
+    ) -> ResolvedMlflowBrowserSession | None:
+        row = self._session.scalar(
+            select(MlflowBrowserSessionRow).where(
+                MlflowBrowserSessionRow.digest == digest,
+                MlflowBrowserSessionRow.revoked_at.is_(None),
+                MlflowBrowserSessionRow.expires_at > now,
+            )
+        )
+        if row is None:
+            return None
+        principal = self._session.scalar(
+            select(PrincipalRow.public_id).where(PrincipalRow.id == row.principal_id)
+        )
+        project = self._session.scalar(
+            select(ResearchProjectRow.public_id).where(
+                ResearchProjectRow.id == row.default_project_id
+            )
+        )
+        if principal is None or project is None:
+            raise RuntimeError("MLflow browser session refers to a missing resource")
+        return ResolvedMlflowBrowserSession(
+            PublicId(ResourceKind.PRINCIPAL, principal),
+            PublicId(ResourceKind.PROJECT, project),
+        )
+
+    def revoke_mlflow_browser_sessions(self, principal_id: PublicId, now: datetime) -> None:
+        principal_key = self._session.scalar(
+            select(PrincipalRow.id).where(PrincipalRow.public_id == str(principal_id))
+        )
+        if principal_key is None:
+            return
+        rows = self._session.scalars(
+            select(MlflowBrowserSessionRow).where(
+                MlflowBrowserSessionRow.principal_id == principal_key,
+                MlflowBrowserSessionRow.revoked_at.is_(None),
+            )
+        )
+        for row in rows:
+            row.revoked_at = now
+        self._session.commit()
 
 
 class SqlAlchemyPublicationUnitOfWork:

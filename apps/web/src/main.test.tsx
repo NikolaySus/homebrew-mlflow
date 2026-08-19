@@ -75,6 +75,8 @@ describe("project onboarding", () => {
 
   it("creates a project and reveals the seeded GitLab repository", async () => {
     let created = false;
+    const popup = { location: { href: "" }, close: vi.fn() };
+    vi.spyOn(window, "open").mockReturnValue(popup as unknown as Window);
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
@@ -91,6 +93,11 @@ describe("project onboarding", () => {
           });
         if (url.endsWith("/api/v1/organization"))
           return json({ id: "org_1", name: "Research" });
+        if (url.endsWith("/api/v1/auth/mlflow/session") && method === "POST")
+          return json({
+            workspace_url:
+              "/mlflow/?workspace=pr-01k00000000000000000000000#/experiments",
+          });
         if (url.endsWith("/api/v1/projects") && method === "POST") {
           created = true;
           return json(
@@ -177,5 +184,11 @@ describe("project onboarding", () => {
       within(metadata).getByRole("heading", { name: "Environment specifications" }),
     ).not.toBeNull();
     expect(metadata.querySelectorAll(":scope > .overviewInfoGroup")).toHaveLength(3);
+    await user.click(screen.getByRole("button", { name: "Open in MLflow" }));
+    await waitFor(() =>
+      expect(popup.location.href).toBe(
+        "/mlflow/?workspace=pr-01k00000000000000000000000#/experiments",
+      ),
+    );
   });
 });

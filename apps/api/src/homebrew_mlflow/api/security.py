@@ -50,6 +50,58 @@ def mlflow_claims(
     return claims
 
 
+def mlflow_read_claims(
+    authorization: Annotated[str | None, Header()] = None,
+) -> AccessTokenClaims:
+    if authorization is None or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="authentication_required")
+    try:
+        claims = access_tokens().verify(
+            authorization.removeprefix("Bearer "), TokenAudience.MLFLOW
+        )
+    except AccessTokenFailure as error:
+        raise HTTPException(status_code=401, detail="invalid_access_token") from error
+    if claims.project_id is None or MachineScope.READ not in claims.scopes:
+        raise HTTPException(status_code=403, detail="project_read_scope_required")
+    return claims
+
+
+def mlflow_workspace_claims(
+    authorization: Annotated[str | None, Header()] = None,
+) -> AccessTokenClaims:
+    if authorization is None or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="authentication_required")
+    try:
+        claims = access_tokens().verify(
+            authorization.removeprefix("Bearer "), TokenAudience.MLFLOW
+        )
+    except AccessTokenFailure as error:
+        raise HTTPException(status_code=401, detail="invalid_access_token") from error
+    if claims.project_id is None or not (
+        MachineScope.READ in claims.scopes or MachineScope.TRACK in claims.scopes
+    ):
+        raise HTTPException(status_code=403, detail="project_workspace_scope_required")
+    return claims
+
+
+def mlflow_attachment_claims(
+    authorization: Annotated[str | None, Header()] = None,
+) -> AccessTokenClaims:
+    if authorization is None or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="authentication_required")
+    try:
+        claims = access_tokens().verify(
+            authorization.removeprefix("Bearer "), TokenAudience.MLFLOW
+        )
+    except AccessTokenFailure as error:
+        raise HTTPException(status_code=401, detail="invalid_access_token") from error
+    if claims.project_id is None or not (
+        MachineScope.READ in claims.scopes or MachineScope.TRACK in claims.scopes
+    ):
+        raise HTTPException(status_code=403, detail="project_read_scope_required")
+    return claims
+
+
 def run_control_claims(
     run_id: str,
     authorization: Annotated[str | None, Header()] = None,

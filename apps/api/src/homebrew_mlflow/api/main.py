@@ -28,6 +28,7 @@ from .environments import router as environments_router
 from .identity import router as identity_router
 from .machine_credentials import router as machine_credentials_router
 from .memberships import router as memberships_router
+from .mlflow_compat import router as mlflow_compat_router
 from .observability import (
     RequestRateLimiter,
     log_request,
@@ -63,6 +64,7 @@ def create_app() -> FastAPI:
     app.include_router(attachments_router)
     app.include_router(machine_credentials_router)
     app.include_router(memberships_router)
+    app.include_router(mlflow_compat_router)
     app.include_router(organization_memberships_router)
     app.include_router(pipelines_router)
     app.include_router(artifacts_router)

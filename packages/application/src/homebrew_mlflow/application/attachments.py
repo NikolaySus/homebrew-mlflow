@@ -76,7 +76,9 @@ class AttachmentService:
         self._max_count = max_count
 
     def upload(self, actor_id: PublicId, command: UploadAttachment) -> RunAttachment:
-        run = self._authorized_run(actor_id, command.run_id, command.project_id)
+        run = self._authorized_run(
+            actor_id, command.run_id, command.project_id, MachineScope.TRACK
+        )
         if run.state is not RunState.RUNNING:
             raise ResourceConflict("only a running Run accepts attachments")
         path = normalize_artifact_path(command.path)
@@ -112,13 +114,13 @@ class AttachmentService:
     def list(
         self, actor_id: PublicId, run_id: PublicId, project_id: PublicId
     ) -> tuple[RunAttachment, ...]:
-        self._authorized_run(actor_id, run_id, project_id)
+        self._authorized_run(actor_id, run_id, project_id, MachineScope.READ)
         return self._uow.list_attachments(run_id)
 
     def download(
         self, actor_id: PublicId, run_id: PublicId, project_id: PublicId, path: str
     ) -> tuple[RunAttachment, bytes]:
-        self._authorized_run(actor_id, run_id, project_id)
+        self._authorized_run(actor_id, run_id, project_id, MachineScope.READ)
         attachment = self._uow.attachment(run_id, normalize_artifact_path(path))
         if attachment is None:
             raise ValueError("attachment does not exist")
@@ -126,15 +128,21 @@ class AttachmentService:
             raise AttachmentUnavailable("attachment bytes expired under retention policy")
         return attachment, self._objects.get(attachment.object_key)
 
-    def _authorized_run(self, actor_id: PublicId, run_id: PublicId, project_id: PublicId) -> Run:
+    def _authorized_run(
+        self,
+        actor_id: PublicId,
+        run_id: PublicId,
+        project_id: PublicId,
+        requirement: MachineScope,
+    ) -> Run:
         run = self._uow.run(run_id)
         if run is None:
             raise ValueError("Run does not exist")
         if run.project_id != project_id:
             raise AuthorizationDenied("attachment credential is bound to another project")
         role = self._uow.project_role(project_id, actor_id)
-        if role is None or not permits(role, MachineScope.TRACK):
-            raise AuthorizationDenied("Contributor role is required for Run attachments")
+        if role is None or not permits(role, requirement):
+            raise AuthorizationDenied("project role does not permit Run attachment access")
         return run
 
     @staticmethod

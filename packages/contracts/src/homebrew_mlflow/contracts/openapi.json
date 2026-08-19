@@ -93,6 +93,18 @@
         "responses": {"200": {"description": "Short-lived access token", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/AccessTokenResponse"}}}}, "401": {"description": "No valid browser session", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorEnvelope"}}}}}
       }
     },
+    "/api/v1/auth/mlflow/session": {
+      "post": {
+        "operationId": "createMlflowBrowserSession",
+        "summary": "Create a revocable browser-to-gateway MLflow session",
+        "security": [{"bearerAuth": []}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/MlflowBrowserSessionRequest"}}}},
+        "responses": {
+          "200": {"description": "MLflow browser session created", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/MlflowBrowserSessionResponse"}}}},
+          "403": {"description": "Project membership required", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorEnvelope"}}}}
+        }
+      }
+    },
     "/api/v1/auth/web/logout": {
       "post": {
         "operationId": "logoutWebSession", "summary": "Revoke and clear the browser refresh family",
@@ -109,6 +121,26 @@
         "responses": {
           "200": {"description": "Scoped access token", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/AccessTokenResponse"}}}},
           "403": {"description": "Insufficient project role", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorEnvelope"}}}}
+        }
+      }
+    },
+    "/api/v1/mlflow/workspaces": {
+      "get": {
+        "operationId": "listMlflowWorkspaces",
+        "summary": "List active Research Projects exposed as MLflow Workspaces",
+        "security": [{"bearerAuth": []}],
+        "responses": {"200": {"description": "Authorized workspaces", "content": {"application/json": {"schema": {"type": "array", "items": {"$ref": "#/components/schemas/MlflowWorkspace"}}}}}}
+      }
+    },
+    "/api/v1/mlflow/workspaces/{workspace}/snapshot": {
+      "get": {
+        "operationId": "getMlflowProjectSnapshot",
+        "summary": "Read the canonical tracking-core snapshot for one workspace",
+        "security": [{"bearerAuth": []}],
+        "parameters": [{"name": "workspace", "in": "path", "required": true, "schema": {"type": "string", "pattern": "^pr-[0-9a-hjkmnp-tv-z]{26}$"}}],
+        "responses": {
+          "200": {"description": "Canonical Experiment and Run snapshot", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/MlflowProjectSnapshot"}}}},
+          "403": {"description": "Workspace scope mismatch", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorEnvelope"}}}}
         }
       }
     },
@@ -715,6 +747,57 @@
         "type": "object", "additionalProperties": false,
         "required": ["access_token", "token_type", "expires_in"],
         "properties": {"access_token": {"type": "string"}, "token_type": {"type": "string", "const": "Bearer"}, "expires_in": {"type": "integer", "const": 1200}}
+      },
+      "MlflowBrowserSessionRequest": {
+        "type": "object", "additionalProperties": false, "required": ["project_id"],
+        "properties": {"project_id": {"type": "string", "pattern": "^pr_[0-9A-HJKMNP-TV-Z]{26}$"}}
+      },
+      "MlflowBrowserSessionResponse": {
+        "type": "object", "additionalProperties": false, "required": ["workspace_url", "expires_in"],
+        "properties": {"workspace_url": {"type": "string", "pattern": "^/mlflow/\\?workspace=pr-[0-9a-hjkmnp-tv-z]{26}#/experiments$"}, "expires_in": {"type": "integer", "const": 43200}}
+      },
+      "MlflowWorkspace": {
+        "type": "object", "additionalProperties": false,
+        "required": ["name", "project_id", "project_name", "project_slug"],
+        "properties": {
+          "name": {"type": "string", "pattern": "^pr-[0-9a-hjkmnp-tv-z]{26}$"},
+          "project_id": {"type": "string", "pattern": "^pr_[0-9A-HJKMNP-TV-Z]{26}$"},
+          "project_name": {"type": "string"}, "project_slug": {"type": "string"}
+        }
+      },
+      "MlflowExperiment": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "name", "created_at", "archived_at", "last_update_at"],
+        "properties": {
+          "id": {"type": "string", "pattern": "^exp_[0-9A-HJKMNP-TV-Z]{26}$"},
+          "name": {"type": "string"}, "created_at": {"type": "string", "format": "date-time"},
+          "archived_at": {"oneOf": [{"type": "string", "format": "date-time"}, {"type": "null"}]},
+          "last_update_at": {"type": "string", "format": "date-time"}
+        }
+      },
+      "MlflowRun": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "experiment_id", "creator_principal_id", "state", "created_at", "started_at", "ended_at", "attachment_uri", "parameters", "metrics", "tags"],
+        "properties": {
+          "id": {"type": "string", "pattern": "^run_[0-9A-HJKMNP-TV-Z]{26}$"},
+          "experiment_id": {"type": "string", "pattern": "^exp_[0-9A-HJKMNP-TV-Z]{26}$"},
+          "creator_principal_id": {"type": "string", "pattern": "^principal_[0-9A-HJKMNP-TV-Z]{26}$"},
+          "state": {"type": "string"}, "created_at": {"type": "string", "format": "date-time"},
+          "started_at": {"oneOf": [{"type": "string", "format": "date-time"}, {"type": "null"}]},
+          "ended_at": {"oneOf": [{"type": "string", "format": "date-time"}, {"type": "null"}]},
+          "attachment_uri": {"type": "string"},
+          "parameters": {"type": "array", "items": {"$ref": "#/components/schemas/ParameterInput"}},
+          "metrics": {"type": "array", "items": {"$ref": "#/components/schemas/MetricInput"}},
+          "tags": {"type": "array", "items": {"$ref": "#/components/schemas/TagInput"}}
+        }
+      },
+      "MlflowProjectSnapshot": {
+        "type": "object", "additionalProperties": false, "required": ["workspace", "experiments", "runs"],
+        "properties": {
+          "workspace": {"$ref": "#/components/schemas/MlflowWorkspace"},
+          "experiments": {"type": "array", "items": {"$ref": "#/components/schemas/MlflowExperiment"}},
+          "runs": {"type": "array", "items": {"$ref": "#/components/schemas/MlflowRun"}}
+        }
       },
       "AwsCredentialProcessResponse": {
         "type": "object", "additionalProperties": false,

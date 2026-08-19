@@ -6,7 +6,7 @@ import hmac
 import json
 import secrets
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Literal
 from urllib.parse import urlencode
 
@@ -25,6 +25,8 @@ from fastapi import (
 from fastapi.responses import RedirectResponse
 from homebrew_mlflow.application import (
     AccessTokenClaims,
+    AccessTokenFailure,
+    MlflowBrowserSessionService,
     RefreshCredentialService,
     TokenAudience,
 )
@@ -33,6 +35,7 @@ from homebrew_mlflow.infrastructure import (
     DevicePollStatus,
     GitLabDeviceOAuthClient,
     SqlAlchemyGitLabIdentityStore,
+    SqlAlchemyMlflowBrowserSessionStore,
     SqlAlchemyProjectUnitOfWork,
     SqlAlchemyRefreshCredentialStore,
     SqlAlchemyRepositoryUnitOfWork,
@@ -127,6 +130,35 @@ class AccessTokenResponse(BaseModel):
     access_token: str
     token_type: Literal["Bearer"] = "Bearer"
     expires_in: int = 1200
+
+
+class MlflowBrowserSessionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project_id: str
+
+
+class MlflowBrowserSessionResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    workspace_url: str
+    expires_in: int = 12 * 3600
+
+
+def _workspace_name(project_id: PublicId) -> str:
+    return str(project_id).replace("pr_", "pr-", 1).lower()
+
+
+def _workspace_project(value: str | None) -> PublicId | None:
+    if value is None or not value.strip():
+        return None
+    normalized = value.strip().lower()
+    if not normalized.startswith("pr-"):
+        raise HTTPException(status_code=404, detail="workspace_not_found")
+    try:
+        return PublicId(ResourceKind.PROJECT, "pr_" + normalized.removeprefix("pr-").upper())
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail="workspace_not_found") from error
 
 
 def _web_callback_url() -> str:
@@ -372,6 +404,110 @@ def web_session(
     )
 
 
+@router.post("/mlflow/session", response_model=MlflowBrowserSessionResponse)
+def create_mlflow_browser_session(
+    body: MlflowBrowserSessionRequest,
+    response: Response,
+    request: Request,
+    claims: Annotated[AccessTokenClaims, Depends(platform_claims)],
+) -> MlflowBrowserSessionResponse:
+    try:
+        project_id = PublicId(ResourceKind.PROJECT, body.project_id)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail="project_not_found") from error
+    now = datetime.now(UTC)
+    settings = get_settings()
+    with create_session(settings.database_url) as session:
+        token = MlflowBrowserSessionService(
+            SqlAlchemyMlflowBrowserSessionStore(session)
+        ).issue(claims.principal_id, project_id, now)
+        _audit_authentication(
+            session,
+            claims.principal_id,
+            "authentication.mlflow_browser",
+            request.state.request_id,
+            now,
+            project_id=project_id,
+        )
+    response.set_cookie(
+        "hm_mlflow_session",
+        token,
+        httponly=True,
+        secure=settings.environment == "production",
+        samesite="lax",
+        max_age=12 * 3600,
+        path="/mlflow",
+    )
+    workspace = _workspace_name(project_id)
+    return MlflowBrowserSessionResponse(
+        workspace_url=f"/mlflow/?workspace={workspace}#/experiments"
+    )
+
+
+@router.get("/mlflow/authorize", include_in_schema=False)
+def authorize_mlflow_gateway(
+    request: Request,
+    authorization: Annotated[str | None, Header()] = None,
+    hm_mlflow_session: Annotated[str | None, Cookie()] = None,
+    x_mlflow_workspace: Annotated[str | None, Header()] = None,
+) -> Response:
+    settings = get_settings()
+    now = datetime.now(UTC)
+    if authorization is not None and authorization.startswith("Bearer "):
+        try:
+            claims = access_tokens().verify(
+                authorization.removeprefix("Bearer "), TokenAudience.MLFLOW, now=now
+            )
+        except AccessTokenFailure as error:
+            raise HTTPException(status_code=401, detail="invalid_access_token") from error
+        if (
+            claims.project_id is None
+            or claims.run_id is None
+            or MachineScope.TRACK not in claims.scopes
+        ):
+            raise HTTPException(status_code=403, detail="run_binding_required")
+        selected = _workspace_project(x_mlflow_workspace)
+        if selected is not None and selected != claims.project_id:
+            raise HTTPException(status_code=403, detail="workspace_scope_mismatch")
+        with create_session(settings.database_url) as session:
+            role = SqlAlchemyRepositoryUnitOfWork(session).project_role(
+                claims.project_id, claims.principal_id
+            )
+        if role is None or not permits(role, MachineScope.TRACK):
+            raise HTTPException(status_code=403, detail="forbidden")
+        return Response(
+            status_code=204,
+            headers={
+                "Authorization": authorization,
+                "X-MLflow-Workspace": _workspace_name(claims.project_id),
+            },
+        )
+    if hm_mlflow_session is None:
+        if "text/html" in request.headers.get("accept", ""):
+            return RedirectResponse(url="/", status_code=303)
+        raise HTTPException(status_code=401, detail="authentication_required")
+    selected = _workspace_project(x_mlflow_workspace)
+    with create_session(settings.database_url) as session:
+        resolved = MlflowBrowserSessionService(
+            SqlAlchemyMlflowBrowserSessionStore(session)
+        ).resolve(hm_mlflow_session, selected, now)
+    token = access_tokens().issue(
+        resolved.principal_id,
+        TokenAudience.MLFLOW,
+        project_id=resolved.default_project_id,
+        scopes=frozenset({MachineScope.READ}),
+        now=now,
+        lifetime=timedelta(minutes=2),
+    )
+    return Response(
+        status_code=204,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "X-MLflow-Workspace": _workspace_name(resolved.default_project_id),
+        },
+    )
+
+
 @router.post("/web/logout", status_code=status.HTTP_204_NO_CONTENT)
 def web_logout(
     response: Response,
@@ -390,6 +526,9 @@ def web_logout(
                 hm_refresh, now
             )
             if principal_id is not None:
+                MlflowBrowserSessionService(
+                    SqlAlchemyMlflowBrowserSessionStore(session)
+                ).revoke_all(principal_id, now)
                 _audit_authentication(
                     session,
                     principal_id,
@@ -400,6 +539,7 @@ def web_logout(
                 )
     response.delete_cookie("hm_refresh", path="/api/v1/auth")
     response.delete_cookie("hm_csrf", path="/")
+    response.delete_cookie("hm_mlflow_session", path="/mlflow")
     response.status_code = status.HTTP_204_NO_CONTENT
     return response
 
@@ -499,6 +639,9 @@ def logout(body: RefreshRequest, request: Request) -> Response:
             body.refresh_token, now
         )
         if principal_id is not None:
+            MlflowBrowserSessionService(
+                SqlAlchemyMlflowBrowserSessionStore(session)
+            ).revoke_all(principal_id, now)
             _audit_authentication(
                 session,
                 principal_id,
@@ -519,6 +662,9 @@ def revoke_all(
     request_id = PublicId(ResourceKind.REQUEST, request.state.request_id)
     with create_session(get_settings().database_url) as session:
         RefreshCredentialService(SqlAlchemyRefreshCredentialStore(session)).revoke_all(
+            claims.principal_id, now
+        )
+        MlflowBrowserSessionService(SqlAlchemyMlflowBrowserSessionStore(session)).revoke_all(
             claims.principal_id, now
         )
         audit = SqlAlchemyProjectUnitOfWork(session)

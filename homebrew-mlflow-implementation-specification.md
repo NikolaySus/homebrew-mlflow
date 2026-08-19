@@ -406,6 +406,15 @@ Repository templates SHOULD set `log_models=False` for supported autologging int
 
 The supported MLflow endpoint subset and client-version matrix must be explicit in code and documentation. Unsupported upstream operations must return a stable `unsupported_operation` response rather than silently corrupting or partially persisting state.
 
+The browser compatibility surface is read-only. The gateway establishes a revocable HTTP-only
+MLflow browser session, maps each active authorized Research Project to a stable native MLflow
+Workspace, rechecks Project Membership for every selected workspace, and forwards only a
+short-lived project-bound `mlflow`/`read` token. It MUST strip the browser session cookie before
+proxying to MLflow. Browser support is limited initially to workspace discovery, Experiment and
+Run search/read, parameters, scalar metric histories, tags, and policy-limited attachment
+list/download. Experiment/Run mutation, models, traces, prompts, evaluation datasets, and jobs are
+unsupported.
+
 ## 12. Artifact and DVC content model
 
 DVC is the v1 ingestion format, client representation, and large-content identity system. It is not the authoritative lifecycle database.

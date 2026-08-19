@@ -10,4 +10,4 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-editable --package homebrew-mlflow-plugins
 USER 65532:65532
 EXPOSE 5000
-CMD ["mlflow", "server", "--host", "0.0.0.0", "--port", "5000", "--workers", "2", "--backend-store-uri", "homebrew://platform", "--no-serve-artifacts"]
+CMD ["mlflow", "server", "--host", "0.0.0.0", "--port", "5000", "--workers", "2", "--backend-store-uri", "homebrew://platform", "--workspace-store-uri", "homebrew://platform", "--enable-workspaces", "--no-serve-artifacts"]

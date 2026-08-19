@@ -1,15 +1,11 @@
 from __future__ import annotations
 
-import base64
-import json
 import os
 from collections.abc import Sequence
-from pathlib import Path
 from typing import Any, cast
 
 import requests
-from flask import has_request_context, request
-from mlflow.entities import Experiment, Metric, Param, Run, RunData, RunInfo, RunTag
+from mlflow.entities import Experiment, Metric, Param, Run, RunData, RunInfo, RunTag, ViewType
 from mlflow.exceptions import MlflowException
 from mlflow.protos.databricks_pb2 import (
     CUSTOMER_UNAUTHORIZED,
@@ -17,12 +13,18 @@ from mlflow.protos.databricks_pb2 import (
     PERMISSION_DENIED,
     RESOURCE_DOES_NOT_EXIST,
 )
+from mlflow.store.entities.paged_list import PagedList
 from mlflow.store.tracking.abstract_store import AbstractStore
+from mlflow.utils.search_utils import SearchExperimentsUtils, SearchUtils
+from mlflow.utils.workspace_context import get_request_workspace
+
+from .auth_context import authorization_header, token_claims
 
 
 def _unsupported(operation: str) -> MlflowException:
     return MlflowException(
-        f"unsupported_operation: {operation} is not supported by Homebrew MLflow"
+        f"unsupported_operation: {operation} is not supported by Homebrew MLflow",
+        error_code=INVALID_PARAMETER_VALUE,
     )
 
 
@@ -46,51 +48,49 @@ def _platform_error(response: requests.Response) -> MlflowException:
 class HomebrewTrackingStore(AbstractStore):
     """Pinned MLflow compatibility adapter backed by canonical platform APIs."""
 
+    supports_workspaces = True
+
     def __init__(self, store_uri: str, artifact_uri: str | None = None) -> None:
         super().__init__()  # type: ignore[no-untyped-call]
         self._base_url = os.environ["HOMEBREW_MLFLOW_PLATFORM_INTERNAL_URL"].rstrip("/")
 
     def _headers(self) -> dict[str, str]:
-        if has_request_context():
-            authorization = request.headers.get("Authorization")
-        else:
-            token_file = os.environ.get("MLFLOW_TRACKING_TOKEN_FILE")
-            token = (
-                Path(token_file).read_text(encoding="utf-8").strip()
-                if token_file
-                else os.environ.get("MLFLOW_TRACKING_TOKEN")
-            )
-            authorization = f"Bearer {token}" if token else None
-        if not authorization:
-            raise MlflowException(
-                "authentication_required: missing Run-scoped logging token",
-                error_code=CUSTOMER_UNAUTHORIZED,
-            )
-        token = authorization.removeprefix("Bearer ")
-        if not authorization.startswith("Bearer ") or len(token.split(".")) != 3:
-            raise MlflowException(
-                "authentication_required: malformed Run-scoped logging token",
-                error_code=CUSTOMER_UNAUTHORIZED,
-            )
-        return {"Authorization": authorization}
+        return authorization_header()
 
     def _bound_run_id(self) -> str:
-        authorization = self._headers()["Authorization"]
         try:
-            token = authorization.removeprefix("Bearer ")
-            payload_part = token.split(".")[1]
-            payload = json.loads(
-                base64.urlsafe_b64decode(payload_part + "=" * (-len(payload_part) % 4))
-            )
-            run_id = payload["run"]
+            run_id = token_claims()["run"]
             if not isinstance(run_id, str):
                 raise TypeError
             return run_id
-        except (IndexError, KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
+        except (KeyError, TypeError) as error:
             raise MlflowException(
                 "run_binding_required: malformed logging token",
                 error_code=CUSTOMER_UNAUTHORIZED,
             ) from error
+
+    def _read_snapshot(self) -> dict[str, Any]:
+        workspace = get_request_workspace()
+        if not workspace:
+            project_id = token_claims().get("prj")
+            if not isinstance(project_id, str):
+                raise MlflowException.invalid_parameter_value("active workspace is required")
+            workspace = project_id.replace("pr_", "pr-", 1).lower()
+        response = requests.get(
+            f"{self._base_url}/api/v1/mlflow/workspaces/{workspace}/snapshot",
+            headers=self._headers(),
+            timeout=30,
+        )
+        if not getattr(response, "ok", True):
+            raise _platform_error(response)
+        return cast(dict[str, Any], response.json())
+
+    @staticmethod
+    def _read_token() -> bool:
+        try:
+            return "read" in token_claims().get("scp", [])
+        except MlflowException:
+            return False
 
     def _get(self, run_id: str) -> dict[str, Any]:
         response = requests.get(
@@ -132,7 +132,20 @@ class HomebrewTrackingStore(AbstractStore):
             raise _platform_error(response)
 
     def get_run(self, run_id: str) -> Run:
-        payload = self._get(run_id)
+        if self._read_token():
+            payload = next(
+                (item for item in self._read_snapshot()["runs"] if item["id"] == run_id),
+                None,
+            )
+            if payload is None:
+                raise MlflowException(
+                    "run_not_found", error_code=RESOURCE_DOES_NOT_EXIST
+                )
+        else:
+            payload = self._get(run_id)
+        return self._run_entity(payload)
+
+    def _run_entity(self, payload: dict[str, Any]) -> Run:
         metrics: dict[str, Metric] = {}
         for item in payload["metrics"]:
             candidate = Metric(item["key"], item["value"], item["timestamp_ms"], item["step"])
@@ -146,9 +159,9 @@ class HomebrewTrackingStore(AbstractStore):
             RunInfo(  # type: ignore[no-untyped-call]
                 payload["id"],
                 payload["experiment_id"],
-                "homebrew-mlflow",
+                payload.get("creator_principal_id", "homebrew-mlflow"),
                 self._status(payload["state"]),
-                self._milliseconds(payload["started_at"]),
+                self._milliseconds(payload["started_at"] or payload.get("created_at")),
                 self._milliseconds(payload["ended_at"]),
                 "active",
                 payload["attachment_uri"],
@@ -165,6 +178,18 @@ class HomebrewTrackingStore(AbstractStore):
                     for item in payload["tags"]
                 ],
             ),
+        )
+
+    def _experiment_entity(self, payload: dict[str, Any]) -> Experiment:
+        return Experiment(  # type: ignore[no-untyped-call]
+            payload["id"],
+            payload["name"],
+            f"homebrew://{payload['id']}",
+            "deleted" if payload["archived_at"] else "active",
+            tags=[],
+            creation_time=self._milliseconds(payload["created_at"]),
+            last_update_time=self._milliseconds(payload["last_update_at"]),
+            workspace=get_request_workspace(),
         )
 
     @staticmethod
@@ -211,15 +236,28 @@ class HomebrewTrackingStore(AbstractStore):
         metric_key: str,
         max_results: int | None = None,
         page_token: str | None = None,
-    ) -> list[Metric]:
-        if page_token is not None:
-            raise _unsupported("metric history pagination")
+    ) -> PagedList[Metric]:
+        payload = (
+            next(
+                (item for item in self._read_snapshot()["runs"] if item["id"] == run_id),
+                None,
+            )
+            if self._read_token()
+            else self._get(run_id)
+        )
+        if payload is None:
+            raise MlflowException("run_not_found", error_code=RESOURCE_DOES_NOT_EXIST)
         values = [
             Metric(item["key"], item["value"], item["timestamp_ms"], item["step"])
-            for item in self._get(run_id)["metrics"]
+            for item in payload["metrics"]
             if item["key"] == metric_key
         ]
-        return values[:max_results] if max_results is not None else values
+        if max_results is None:
+            return PagedList(values, None)
+        page, token = SearchUtils.paginate(  # type: ignore[no-untyped-call]
+            values, page_token, max_results
+        )
+        return PagedList(page, token)
 
     def update_run_info(
         self,
@@ -233,6 +271,20 @@ class HomebrewTrackingStore(AbstractStore):
         return self.get_run(run_id).info
 
     def get_experiment(self, experiment_id: str) -> Experiment:
+        if self._read_token():
+            payload = next(
+                (
+                    item
+                    for item in self._read_snapshot()["experiments"]
+                    if item["id"] == experiment_id
+                ),
+                None,
+            )
+            if payload is None:
+                raise MlflowException(
+                    "experiment_not_found", error_code=RESOURCE_DOES_NOT_EXIST
+                )
+            return self._experiment_entity(payload)
         run_id = self._bound_run_id()
         if self._get(run_id)["experiment_id"] != experiment_id:
             raise MlflowException("RESOURCE_DOES_NOT_EXIST: experiment is outside this Run")
@@ -242,6 +294,67 @@ class HomebrewTrackingStore(AbstractStore):
             f"homebrew://{run_id}",
             "active",
         )
+
+    def get_experiment_by_name(self, experiment_name: str) -> Experiment | None:
+        if not self._read_token():
+            return None
+        return next(
+            (
+                self._experiment_entity(item)
+                for item in self._read_snapshot()["experiments"]
+                if item["name"] == experiment_name
+            ),
+            None,
+        )
+
+    def search_experiments(
+        self,
+        view_type: int = ViewType.ACTIVE_ONLY,
+        max_results: int = 1000,
+        filter_string: str | None = None,
+        order_by: list[str] | None = None,
+        page_token: str | None = None,
+    ) -> PagedList[Experiment]:
+        experiments = [
+            self._experiment_entity(item) for item in self._read_snapshot()["experiments"]
+        ]
+        if view_type == ViewType.ACTIVE_ONLY:
+            experiments = [item for item in experiments if item.lifecycle_stage == "active"]
+        elif view_type == ViewType.DELETED_ONLY:
+            experiments = [item for item in experiments if item.lifecycle_stage == "deleted"]
+        experiments = SearchExperimentsUtils.filter(  # type: ignore[no-untyped-call]
+            experiments, filter_string
+        )
+        experiments = SearchExperimentsUtils.sort(  # type: ignore[no-untyped-call]
+            experiments, order_by or ["last_update_time DESC"]
+        )
+        page, token = SearchExperimentsUtils.paginate(  # type: ignore[no-untyped-call]
+            experiments, page_token, max_results
+        )
+        return PagedList(page, token)
+
+    def _search_runs(
+        self,
+        experiment_ids: list[str],
+        filter_string: str | None,
+        run_view_type: int,
+        max_results: int,
+        order_by: list[str] | None,
+        page_token: str | None,
+    ) -> tuple[list[Run], str | None]:
+        if run_view_type == ViewType.DELETED_ONLY:
+            return [], None
+        runs = [
+            self._run_entity(item)
+            for item in self._read_snapshot()["runs"]
+            if item["experiment_id"] in experiment_ids
+        ]
+        runs = SearchUtils.filter(runs, filter_string)  # type: ignore[no-untyped-call]
+        runs = SearchUtils.sort(runs, order_by)  # type: ignore[no-untyped-call]
+        page, token = SearchUtils.paginate(  # type: ignore[no-untyped-call]
+            runs, page_token, max_results
+        )
+        return cast(list[Run], page), cast(str | None, token)
 
     def create_experiment(self, name: str, artifact_location: str | None, tags: Any) -> str:
         raise _unsupported("create_experiment; use homebrew-mlflow run --experiment")
@@ -256,3 +369,39 @@ class HomebrewTrackingStore(AbstractStore):
 
     def restore_run(self, run_id: str) -> None:
         raise _unsupported("restore_run")
+
+    def delete_experiment(self, experiment_id: str) -> None:
+        raise _unsupported("delete_experiment")
+
+    def restore_experiment(self, experiment_id: str) -> None:
+        raise _unsupported("restore_experiment")
+
+    def rename_experiment(self, experiment_id: str, new_name: str) -> None:
+        raise _unsupported("rename_experiment")
+
+    def set_experiment_tag(self, experiment_id: str, tag: Any) -> None:
+        raise _unsupported("set_experiment_tag")
+
+    def delete_experiment_tag(self, experiment_id: str, key: str) -> None:
+        raise _unsupported("delete_experiment_tag")
+
+    def log_inputs(self, run_id: str, datasets: Any = None, models: Any = None) -> None:
+        raise _unsupported("log_inputs")
+
+    def link_traces_to_run(self, trace_ids: list[str], run_id: str) -> None:
+        raise _unsupported("link_traces_to_run")
+
+    def search_logged_models(self, *args: Any, **kwargs: Any) -> Any:
+        raise _unsupported("search_logged_models")
+
+    def get_logged_model(self, *args: Any, **kwargs: Any) -> Any:
+        raise _unsupported("get_logged_model")
+
+    def create_logged_model(self, *args: Any, **kwargs: Any) -> Any:
+        raise _unsupported("create_logged_model")
+
+    def search_datasets(self, *args: Any, **kwargs: Any) -> Any:
+        raise _unsupported("search_datasets")
+
+    def search_traces(self, *args: Any, **kwargs: Any) -> Any:
+        raise _unsupported("search_traces")

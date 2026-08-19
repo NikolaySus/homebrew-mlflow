@@ -21,7 +21,14 @@ http://localhost:8080, http://127.0.0.1:8080 {
     reverse_proxy api:8000
   }
   handle_path /mlflow/* {
-    reverse_proxy mlflow:5000
+    forward_auth api:8000 {
+      uri /api/v1/auth/mlflow/authorize
+      header_up Cookie {http.request.header.Cookie}
+      copy_headers Authorization X-MLflow-Workspace
+    }
+    reverse_proxy mlflow:5000 {
+      header_up -Cookie
+    }
   }
   handle_path /packages/* {
     root * /srv/packages

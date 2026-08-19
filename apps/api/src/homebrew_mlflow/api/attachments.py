@@ -19,7 +19,7 @@ from homebrew_mlflow.infrastructure import (
 )
 from pydantic import BaseModel, ConfigDict
 
-from .security import mlflow_claims
+from .security import mlflow_attachment_claims, mlflow_claims
 from .settings import get_settings
 
 router = APIRouter(prefix="/api/v1/runs", tags=["attachments"])
@@ -73,6 +73,14 @@ def _binding(claims: AccessTokenClaims, run_id: PublicId) -> PublicId:
     return claims.project_id
 
 
+def _read_binding(claims: AccessTokenClaims, run_id: PublicId) -> PublicId:
+    if claims.project_id is None:
+        raise HTTPException(status_code=403, detail="project_scope_required")
+    if MachineScope.READ in claims.scopes:
+        return claims.project_id
+    return _binding(claims, run_id)
+
+
 def _run_id(value: str) -> PublicId:
     try:
         return PublicId(ResourceKind.RUN, value)
@@ -111,11 +119,11 @@ def upload_attachment(
 @router.get("/{run_id}/attachments", response_model=AttachmentListResponse)
 def list_attachments(
     run_id: str,
-    claims: Annotated[AccessTokenClaims, Depends(mlflow_claims)],
+    claims: Annotated[AccessTokenClaims, Depends(mlflow_attachment_claims)],
     path: Annotated[str, Query()] = "",
 ) -> AttachmentListResponse:
     parsed_run = _run_id(run_id)
-    project_id = _binding(claims, parsed_run)
+    project_id = _read_binding(claims, parsed_run)
     with create_session(get_settings().database_url) as session:
         attachments = _service(session).list(claims.principal_id, parsed_run, project_id)
     prefix = f"{path.rstrip('/')}/" if path else ""
@@ -138,10 +146,10 @@ def list_attachments(
 def download_attachment(
     run_id: str,
     path: Annotated[str, Query(min_length=1)],
-    claims: Annotated[AccessTokenClaims, Depends(mlflow_claims)],
+    claims: Annotated[AccessTokenClaims, Depends(mlflow_attachment_claims)],
 ) -> Response:
     parsed_run = _run_id(run_id)
-    project_id = _binding(claims, parsed_run)
+    project_id = _read_binding(claims, parsed_run)
     with create_session(get_settings().database_url) as session:
         try:
             attachment, content = _service(session).download(

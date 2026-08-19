@@ -29,6 +29,7 @@ services:
   mlflow:
     environment:
       MLFLOW_SERVER_ALLOWED_HOSTS: ml.spkya.ru,localhost,127.0.0.1,mlflow,mlflow:5000
+      MLFLOW_SERVER_CORS_ALLOWED_ORIGINS: https://ml.spkya.ru
     mem_limit: 768m
     restart: unless-stopped
 

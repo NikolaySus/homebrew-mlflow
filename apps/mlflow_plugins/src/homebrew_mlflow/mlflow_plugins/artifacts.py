@@ -11,6 +11,8 @@ from mlflow.entities import FileInfo
 from mlflow.exceptions import MlflowException
 from mlflow.store.artifact.artifact_repo import ArtifactRepository
 
+from .auth_context import authorization_header
+
 _MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024
 
 
@@ -24,11 +26,15 @@ class HomebrewArtifactRepository(ArtifactRepository):
         super().__init__(artifact_uri, tracking_uri, registry_uri)
         parsed = urlparse(artifact_uri)
         self._run_id = parsed.netloc or parsed.path.lstrip("/")
-        self._base_url = os.environ["HOMEBREW_MLFLOW_SERVER"].rstrip("/")
-        self._token = os.environ["MLFLOW_TRACKING_TOKEN"]
+        self._base_url = os.environ.get(
+            "HOMEBREW_MLFLOW_PLATFORM_INTERNAL_URL",
+            os.environ.get("HOMEBREW_MLFLOW_SERVER", ""),
+        ).rstrip("/")
+        if not self._base_url:
+            raise MlflowException("HOMEBREW_MLFLOW_SERVER is required")
 
     def _headers(self) -> dict[str, str]:
-        return {"Authorization": f"Bearer {self._token}"}
+        return authorization_header()
 
     def log_artifact(self, local_file: str, artifact_path: str | None = None) -> None:
         source = Path(local_file)

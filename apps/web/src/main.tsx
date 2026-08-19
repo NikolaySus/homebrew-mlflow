@@ -301,6 +301,25 @@ export function App() {
     return result.access_token;
   }
 
+  async function openMlflow() {
+    if (!selected || selected.state !== "active") return;
+    const target = window.open("about:blank", "_blank");
+    try {
+      const result = await request<{ workspace_url: string }>(
+        "/api/v1/auth/mlflow/session",
+        {
+          method: "POST",
+          body: JSON.stringify({ project_id: selected.id }),
+        },
+      );
+      if (target) target.location.href = result.workspace_url;
+      else window.location.href = result.workspace_url;
+    } catch (caught) {
+      target?.close();
+      showError(caught);
+    }
+  }
+
   useEffect(() => {
     refreshBrowserSession().finally(() => setSessionChecked(true));
   }, []);
@@ -1096,6 +1115,11 @@ export function App() {
               </div>
               <div>
                 <code>{selected.id}</code>
+                {selected.state === "active" && (
+                  <button className="linkButton" onClick={openMlflow}>
+                    Open in MLflow
+                  </button>
+                )}
                 <button className="linkButton" onClick={toggleProjectLifecycle}>
                   {selected.state === "archived" ? "restore" : "archive"}
                 </button>
