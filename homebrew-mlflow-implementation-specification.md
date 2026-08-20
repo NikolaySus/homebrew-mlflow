@@ -402,7 +402,8 @@ Canonical destination policy:
 | Scalar metrics and histories | First-class platform metric records |
 | Small plots/logs/reports within configured policy | Run attachments |
 | Datasets, checkpoints, model weights, large evaluation output | DVC Artifact Versions |
-| Small model signature/descriptive metadata | Run metadata or small attachment |
+| Small model interface signature | Immutable Artifact Version metadata, verified from an exact-commit sidecar |
+| Descriptive metadata | Artifact family or Run metadata |
 | MLflow model binary bundles | Disabled initially |
 
 Repository templates SHOULD set `log_models=False` for supported autologging integrations when model bytes are DVC outputs.
@@ -439,7 +440,13 @@ For each Artifact Version store:
 - one or more physical Storage Locations;
 - source publication record and provenance.
 
-Standard `dvc.yaml`, `dvc.lock`, and standalone `.dvc` files are the only required artifact-related repository metadata. V1 MUST NOT require `research-artifacts.yaml`, `*.artifact.yaml`, enriched custom `.dvc` fields, or another provenance sidecar.
+Standard `dvc.yaml`, `dvc.lock`, and standalone `.dvc` files remain the only general artifact-related
+repository metadata. V1 MUST NOT require `research-artifacts.yaml`, `*.artifact.yaml`, enriched custom
+`.dvc` fields, or another general provenance sidecar. A typed `model` publication is the sole exception:
+it MUST reference a committed, at-most-64-KiB `homebrew-mlflow-signature-v1` JSON sidecar containing
+non-empty MLflow-compatible input and output column or tensor schemas. The server reads it from the exact
+publication commit, validates and canonicalizes it, stores it immutably with its SHA-256 on the Artifact
+Version, and rejects signatures for non-model Artifacts. Existing model versions are not mutated.
 
 The derived file index is operational metadata, not another public content identity. MinIO bucket/key/version is physical placement, not identity.
 
@@ -922,6 +929,9 @@ and parameter capture, and documents typed Artifact publication. Its migration u
 plugin dependency and corresponding locked wheel; researcher-authored experiment files remain untouched.
 Template v7 pins the attachment-download authentication fix. Its migration updates only the managed
 plugin dependency and corresponding locked wheel.
+Template v8 pins immutable model schema and provenance support and documents the required committed model
+signature sidecar. Its migration updates managed documentation and the plugin dependency/locked wheel; it
+does not alter researcher experiment code or retroactively modify published model versions.
 Existing repositories adopt managed settings through ordered, idempotent
 template migrations in `homebrew-mlflow repository configure`. Migrations use narrow known-fragment edits,
 preserve unrelated researcher text, preflight conflicts before tracked writes, refuse newer template versions,

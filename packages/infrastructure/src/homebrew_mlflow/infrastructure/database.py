@@ -91,6 +91,7 @@ from sqlalchemy import (
     text,
     update,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
@@ -493,6 +494,10 @@ class ArtifactVersionRow(Base):
     availability: Mapped[str] = mapped_column(String(16))
     published_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    model_signature: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql")
+    )
+    model_signature_sha256: Mapped[str | None] = mapped_column(String(64))
 
 
 class ArtifactAliasRow(Base):
@@ -3146,6 +3151,8 @@ class SqlAlchemyArtifactCatalogUnitOfWork(SqlAlchemyRepositoryUnitOfWork):
                 if producing_run_public_id is not None
                 else None
             ),
+            row.model_signature,
+            row.model_signature_sha256,
         )
 
 
@@ -3826,6 +3833,17 @@ class SqlAlchemyPublicationUnitOfWork:
         )
         return ProjectRole(role) if role is not None else None
 
+    def artifact_kind(self, project_id: PublicId, artifact_id: PublicId) -> ArtifactKind | None:
+        value = self._session.scalar(
+            select(ArtifactRow.kind)
+            .join(ResearchProjectRow, ResearchProjectRow.id == ArtifactRow.owning_project_id)
+            .where(
+                ResearchProjectRow.public_id == str(project_id),
+                ArtifactRow.public_id == str(artifact_id),
+            )
+        )
+        return ArtifactKind(value) if value is not None else None
+
     def append_audit(self, event: AuditEvent) -> None:
         SqlAlchemyProjectUnitOfWork(self._session).append_audit(event)
 
@@ -4130,6 +4148,8 @@ class SqlAlchemyPublicationWorkStore(SqlAlchemyPublicationUnitOfWork):
                 integrity=version.integrity.value,
                 availability=version.availability.value,
                 published_at=version.published_at,
+                model_signature=validated.model_signature,
+                model_signature_sha256=validated.model_signature_sha256,
             )
         )
         # These rows are connected by database foreign keys rather than ORM
@@ -4197,6 +4217,8 @@ class SqlAlchemyPublicationWorkStore(SqlAlchemyPublicationUnitOfWork):
             sequence,
             mlflow_model_id,
             validated.producing_run_id,
+            validated.model_signature,
+            validated.model_signature_sha256,
         )
 
     def fail(

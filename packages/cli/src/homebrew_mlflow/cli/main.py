@@ -23,6 +23,7 @@ import boto3  # type: ignore[import-untyped]
 import httpx
 import keyring
 import typer
+from homebrew_mlflow.contracts import MODEL_SIGNATURE_FORMAT, parse_model_signature
 from packaging.specifiers import SpecifierSet
 from packaging.version import Version
 
@@ -269,6 +270,29 @@ def _committed_upstream_state(root: Path) -> str:
     if _git_output("rev-list", "--count", f"{upstream}..HEAD", root=root) != "0":
         raise RuntimeError("current commit has not been pushed to its upstream branch")
     return commit
+
+
+def _committed_signature(root: Path, value: str) -> str:
+    candidate = (root / value).resolve()
+    try:
+        relative = candidate.relative_to(root.resolve()).as_posix()
+    except ValueError as error:
+        raise typer.BadParameter("--signature must be inside the repository") from error
+    if not candidate.is_file():
+        raise typer.BadParameter("--signature must name an existing file")
+    result = subprocess.run(
+        ["git", "ls-files", "--error-unmatch", "--", relative],
+        cwd=root,
+        check=False,
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        raise typer.BadParameter("--signature must be tracked by Git")
+    try:
+        parse_model_signature(candidate.read_bytes())
+    except ValueError as error:
+        raise typer.BadParameter(f"invalid --signature: {error}") from error
+    return relative
 
 
 def _dvc_experiment_refs(root: Path) -> dict[str, str]:
@@ -1502,6 +1526,7 @@ def submit_publication(
     stage: Annotated[str | None, typer.Option("--stage")] = None,
     dvc_file: Annotated[str | None, typer.Option("--dvc-file")] = None,
     run_id: Annotated[str | None, typer.Option("--run-id")] = None,
+    signature: Annotated[str | None, typer.Option("--signature")] = None,
 ) -> None:
     """Submit committed DVC metadata for server-side publication validation."""
     repository = _repository_context()
@@ -1529,6 +1554,16 @@ def submit_publication(
         )
         artifact_id = str(artifact_record["id"])
         _warn_if_generic_artifact(artifact_record)
+        signature_reference = None
+        if artifact_record.get("kind") == "model":
+            if signature is None:
+                raise typer.BadParameter("--signature is required for model artifacts")
+            signature_reference = {
+                "path": _committed_signature(root, signature),
+                "format": MODEL_SIGNATURE_FORMAT,
+            }
+        elif signature is not None:
+            raise typer.BadParameter("--signature is only valid for model artifacts")
         exchange = client.post(
             f"{server}/api/v1/auth/exchange",
             headers={"Authorization": f"Bearer {session['access_token']}"},
@@ -1554,6 +1589,7 @@ def submit_publication(
                 "commit_sha": commit_sha,
                 "selector": selector,
                 "run_id": run_id,
+                "model_signature": signature_reference,
                 "client": {"name": "homebrew-mlflow", "version": __version__},
             },
         )

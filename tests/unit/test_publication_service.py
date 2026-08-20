@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 import pytest
 from homebrew_mlflow.application import EventHistoryExpired, PublicationService, ResourceConflict
 from homebrew_mlflow.domain import (
+    ArtifactKind,
     AuditEvent,
     ProjectRole,
     PublicationEvent,
@@ -21,6 +22,12 @@ class MemoryPublicationUnitOfWork:
     commits: int = 0
     expired_through: int = 0
     actor_id: PublicId = field(default_factory=lambda: PublicId.generate(ResourceKind.PRINCIPAL))
+    kind: ArtifactKind = ArtifactKind.GENERIC
+
+    def artifact_kind(
+        self, _project_id: PublicId, _artifact_id: PublicId
+    ) -> ArtifactKind | None:
+        return self.kind
 
     def project_role(self, _project_id: PublicId, principal_id: PublicId) -> ProjectRole | None:
         return ProjectRole.CONTRIBUTOR if principal_id == self.actor_id else None
@@ -68,14 +75,15 @@ def test_same_idempotency_key_and_payload_replays_without_new_validation() -> No
     service = PublicationService(uow)
     project_id = PublicId.generate(ResourceKind.PROJECT)
     now = datetime(2026, 8, 13, tzinfo=UTC)
-    payload = {"artifact_id": "ar_1", "selector": {"kind": "pipeline-output"}}
+    artifact_id = str(PublicId.generate(ResourceKind.ARTIFACT))
+    payload = {"artifact_id": artifact_id, "selector": {"kind": "pipeline-output"}}
 
     first = service.create(uow.actor_id, project_id, "key", payload, now)
     replay = service.create(
         uow.actor_id,
         project_id,
         "key",
-        {"selector": {"kind": "pipeline-output"}, "artifact_id": "ar_1"},
+        {"selector": {"kind": "pipeline-output"}, "artifact_id": artifact_id},
         now,
     )
     assert not first.replayed
@@ -90,9 +98,11 @@ def test_reusing_idempotency_key_with_different_payload_conflicts() -> None:
     service = PublicationService(uow)
     project_id = PublicId.generate(ResourceKind.PROJECT)
     now = datetime(2026, 8, 13, tzinfo=UTC)
-    service.create(uow.actor_id, project_id, "key", {"artifact_id": "ar_1"}, now)
+    first_id = str(PublicId.generate(ResourceKind.ARTIFACT))
+    second_id = str(PublicId.generate(ResourceKind.ARTIFACT))
+    service.create(uow.actor_id, project_id, "key", {"artifact_id": first_id}, now)
     with pytest.raises(ResourceConflict, match="different request"):
-        service.create(uow.actor_id, project_id, "key", {"artifact_id": "ar_2"}, now)
+        service.create(uow.actor_id, project_id, "key", {"artifact_id": second_id}, now)
 
 
 def test_event_replay_before_retained_boundary_expires() -> None:
@@ -100,9 +110,44 @@ def test_event_replay_before_retained_boundary_expires() -> None:
     service = PublicationService(uow)
     project_id = PublicId.generate(ResourceKind.PROJECT)
     operation = service.create(
-        uow.actor_id, project_id, "key", {"artifact_id": "ar_1"}, datetime.now(UTC)
+        uow.actor_id,
+        project_id,
+        "key",
+        {"artifact_id": str(PublicId.generate(ResourceKind.ARTIFACT))},
+        datetime.now(UTC),
     ).operation
 
     with pytest.raises(EventHistoryExpired):
         service.events(uow.actor_id, operation.id, 2)
     assert service.events(uow.actor_id, operation.id, 3) == ()
+
+
+def test_model_publication_requires_signature_before_queueing() -> None:
+    uow = MemoryPublicationUnitOfWork(kind=ArtifactKind.MODEL)
+    with pytest.raises(ResourceConflict, match="require a committed signature"):
+        PublicationService(uow).create(
+            uow.actor_id,
+            PublicId.generate(ResourceKind.PROJECT),
+            "key",
+            {"artifact_id": str(PublicId.generate(ResourceKind.ARTIFACT))},
+            datetime.now(UTC),
+        )
+    assert uow.operations == []
+
+
+def test_non_model_publication_rejects_signature() -> None:
+    uow = MemoryPublicationUnitOfWork()
+    with pytest.raises(ResourceConflict, match="only model"):
+        PublicationService(uow).create(
+            uow.actor_id,
+            PublicId.generate(ResourceKind.PROJECT),
+            "key",
+            {
+                "artifact_id": str(PublicId.generate(ResourceKind.ARTIFACT)),
+                "model_signature": {
+                    "path": "model-signature.json",
+                    "format": "homebrew-mlflow-signature-v1",
+                },
+            },
+            datetime.now(UTC),
+        )

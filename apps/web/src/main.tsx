@@ -88,6 +88,8 @@ type Version = {
   sequence: number;
   mlflow_model_id: string;
   producing_run_id: string | null;
+  model_signature: Record<string, unknown> | null;
+  model_signature_sha256: string | null;
 };
 type ArtifactFile = { path: string; size: number; digest: string | null };
 type Lineage = {
@@ -206,6 +208,7 @@ export function suggestSlug(name: string) {
 }
 
 export function App() {
+  const initialQuery = useMemo(() => new URLSearchParams(window.location.search), []);
   const [token, setToken] = useState("");
   const [sessionChecked, setSessionChecked] = useState(false);
   const [projects, setProjects] = useState<Project[]>([]);
@@ -217,15 +220,18 @@ export function App() {
   const [newProjectName, setNewProjectName] = useState("");
   const [newProjectSlug, setNewProjectSlug] = useState("");
   const [slugEdited, setSlugEdited] = useState(false);
-  const [projectId, setProjectId] = useState("");
-  const [tab, setTab] = useState<Tab>("overview");
+  const [projectId, setProjectId] = useState(initialQuery.get("project") ?? "");
+  const [tab, setTab] = useState<Tab>(initialQuery.has("artifact") ? "artifacts" : "overview");
   const [repositories, setRepositories] = useState<Repository[]>([]);
   const [experiments, setExperiments] = useState<Experiment[]>([]);
   const [runs, setRuns] = useState<Run[]>([]);
   const [runDetail, setRunDetail] = useState<RunDetail | null>(null);
   const [artifacts, setArtifacts] = useState<Artifact[]>([]);
   const [versions, setVersions] = useState<Version[]>([]);
-  const [artifactId, setArtifactId] = useState("");
+  const [artifactId, setArtifactId] = useState(initialQuery.get("artifact") ?? "");
+  const [deepLinkedVersionId, setDeepLinkedVersionId] = useState(
+    initialQuery.get("version") ?? "",
+  );
   const [artifactKind, setArtifactKind] = useState<ArtifactKind | "all">("all");
   const [artifactAliases, setArtifactAliases] = useState<ArtifactAlias[]>([]);
   const [version, setVersion] = useState<Version | null>(null);
@@ -356,7 +362,6 @@ export function App() {
   useEffect(() => {
     if (!projectId) return;
     setRunDetail(null);
-    setArtifactId("");
     setVersion(null);
     setPublicationLog([]);
     Promise.all([
@@ -432,6 +437,13 @@ export function App() {
       })
       .catch(showError);
   }, [artifactId]);
+
+  useEffect(() => {
+    if (!deepLinkedVersionId || version || versions.length === 0) return;
+    const target = versions.find((value) => value.id === deepLinkedVersionId);
+    setDeepLinkedVersionId("");
+    if (target) void chooseVersion(target);
+  }, [deepLinkedVersionId, version, versions]);
 
   function showError(value: unknown) {
     setError(String(value));
@@ -582,6 +594,12 @@ export function App() {
       setGrants(nextGrants);
       setConsumption(commands);
       setRetention(dependencies);
+      const query = new URLSearchParams({
+        project: value.owning_project_id,
+        artifact: value.artifact_id,
+        version: value.id,
+      });
+      window.history.replaceState(null, "", `/?${query.toString()}`);
       setError("");
     } catch (problem) {
       showError(problem);
@@ -1145,7 +1163,12 @@ export function App() {
           <button
             className={project.id === projectId ? "selected" : "nav"}
             key={project.id}
-            onClick={() => setProjectId(project.id)}
+            onClick={() => {
+              setProjectId(project.id);
+              setArtifactId("");
+              setVersion(null);
+              window.history.replaceState(null, "", `/?project=${encodeURIComponent(project.id)}`);
+            }}
           >
             {project.name}
             <small>{project.state}</small>
@@ -1452,6 +1475,11 @@ export function App() {
                           onClick={() => {
                             setArtifactId(artifact.id);
                             setVersion(null);
+                            window.history.replaceState(
+                              null,
+                              "",
+                              `/?project=${encodeURIComponent(projectId)}&artifact=${encodeURIComponent(artifact.id)}`,
+                            );
                           }}
                         >
                           <strong>{artifact.name}</strong>

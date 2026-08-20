@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Callable
 from datetime import datetime
@@ -34,13 +35,17 @@ class HomebrewModelRegistryStore:
         self.store_uri = store_uri
         self._base_url = os.environ["HOMEBREW_MLFLOW_PLATFORM_INTERNAL_URL"].rstrip("/")
 
-    def _catalog(self) -> list[dict[str, Any]]:
+    def _workspace(self) -> str:
         workspace = get_request_workspace()
         if not workspace:
             project_id = token_claims().get("prj")
             if not isinstance(project_id, str):
                 raise MlflowException.invalid_parameter_value("active workspace is required")
             workspace = project_id.replace("pr_", "pr-", 1).lower()
+        return workspace
+
+    def _catalog(self) -> list[dict[str, Any]]:
+        workspace = self._workspace()
         response = requests.get(
             f"{self._base_url}/api/v1/mlflow/workspaces/{workspace}/catalog",
             headers=authorization_header(),
@@ -49,6 +54,47 @@ class HomebrewModelRegistryStore:
         if not response.ok:
             raise MlflowException(f"platform_request_failed: status={response.status_code}")
         payload = cast(dict[str, Any], response.json())
+        snapshot_response = requests.get(
+            f"{self._base_url}/api/v1/mlflow/workspaces/{workspace}/snapshot",
+            headers=authorization_header(),
+            timeout=30,
+        )
+        if not snapshot_response.ok:
+            raise MlflowException(
+                f"platform_request_failed: status={snapshot_response.status_code}"
+            )
+        snapshot = cast(dict[str, Any], snapshot_response.json())
+        versions = {
+            version["id"]: {
+                "id": version["id"],
+                "artifact_id": artifact["id"],
+                "artifact_name": artifact["name"],
+                "kind": artifact["kind"],
+                "sequence": version["sequence"],
+            }
+            for artifact in payload["artifacts"]
+            for version in artifact["versions"]
+        }
+        runs = {run["id"]: run for run in snapshot["runs"]}
+        for artifact in payload["artifacts"]:
+            for version in artifact["versions"]:
+                run = runs.get(version.get("producing_run_id"))
+                version["provenance"] = {
+                    "project_id": snapshot["workspace"]["project_id"],
+                    "current": versions[version["id"]],
+                    "experiment_id": run.get("experiment_id") if run else None,
+                    "run_id": run.get("id") if run else None,
+                    "inputs": [
+                        versions[value]
+                        for value in (run or {}).get("input_artifact_version_ids", [])
+                        if value in versions
+                    ],
+                    "outputs": [
+                        versions[value]
+                        for value in (run or {}).get("output_artifact_version_ids", [])
+                        if value in versions and value != version["id"]
+                    ],
+                }
         return [item for item in payload["artifacts"] if item["kind"] == "model"]
 
     @staticmethod
@@ -66,6 +112,13 @@ class HomebrewModelRegistryStore:
         ]
         timestamp = cls._milliseconds(version["published_at"])
         workspace = get_request_workspace()
+        provenance = version.get("provenance", {})
+        provenance_tags = [
+            ModelVersionTag(  # type: ignore[no-untyped-call]
+                "homebrew.provenance",
+                json.dumps(provenance, separators=(",", ":"), sort_keys=True),
+            )
+        ]
         return ModelVersion(
             artifact["name"],
             str(version["sequence"]),
@@ -84,6 +137,7 @@ class HomebrewModelRegistryStore:
                     "homebrew.dvc_digest",
                     f"{version['algorithm']}:{version['digest']}",
                 ),
+                *provenance_tags,
             ],
             aliases=aliases,
             model_id=version["mlflow_model_id"],
@@ -219,7 +273,9 @@ class HomebrewModelRegistryStore:
 
     def get_model_version_download_uri(self, name: str, version: str) -> str:
         value = self.get_model_version(name, version)
-        return str(value.source)
+        workspace = self._workspace()
+        artifact_version_id = value.tags["homebrew.artifact_version_id"]
+        return f"homebrew-model://{workspace}/{artifact_version_id}"
 
     def __getattr__(self, operation: str) -> Callable[..., Any]:
         def unsupported(*_args: Any, **_kwargs: Any) -> Any:

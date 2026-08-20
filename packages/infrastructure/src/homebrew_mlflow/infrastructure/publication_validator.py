@@ -17,7 +17,9 @@ from homebrew_mlflow.application import (
     ValidatedFile,
     ValidatedPublication,
 )
+from homebrew_mlflow.contracts import MODEL_SIGNATURE_FORMAT, parse_model_signature
 from homebrew_mlflow.domain import (
+    ArtifactKind,
     DvcOutputIdentity,
     OutputKind,
     PublicationOperation,
@@ -70,7 +72,9 @@ class GitLabDvcPublicationValidator:
         self._verified_objects = 0
         self._deadline = monotonic() + self._max_seconds
         request = operation.request_payload
-        artifact_id = self._artifact(operation.project_id, request.get("artifact_id"))
+        artifact_id, artifact_kind = self._artifact(
+            operation.project_id, request.get("artifact_id")
+        )
         provider_id = self._repository(operation.project_id, request.get("repository_id"))
         commit_sha = request.get("commit_sha")
         if not isinstance(commit_sha, str) or len(commit_sha) != 40:
@@ -100,36 +104,71 @@ class GitLabDvcPublicationValidator:
         if expected_count is not None and int(expected_count) != len(files):
             raise PublicationValidationError("object_corrupt")
         run_id = self._run(operation.project_id, request.get("run_id"))
+        signature, signature_sha256 = self._model_signature(
+            artifact_kind, provider_id, commit_sha, request.get("model_signature")
+        )
         return ValidatedPublication(
-            artifact_id,
-            DvcOutputIdentity(
+            artifact_id=artifact_id,
+            identity=DvcOutputIdentity(
                 algorithm,
                 digest,
                 OutputKind.DIRECTORY if is_directory else OutputKind.FILE,
                 total_size,
                 len(files),
             ),
-            files,
-            self._bucket,
-            root_key,
-            run_id,
+            files=files,
+            bucket=self._bucket,
+            object_key=root_key,
+            producing_run_id=run_id,
+            model_signature=signature,
+            model_signature_sha256=signature_sha256,
         )
 
-    def _artifact(self, project_id: PublicId, value: object) -> PublicId:
+    def _artifact(self, project_id: PublicId, value: object) -> tuple[PublicId, ArtifactKind]:
         try:
             artifact_id = PublicId(ResourceKind.ARTIFACT, str(value))
         except ValueError as error:
             raise PublicationValidationError("artifact_not_found") from error
         project_key = self._project_key(project_id)
-        exists = self._session.scalar(
-            select(ArtifactRow.id).where(
+        kind = self._session.scalar(
+            select(ArtifactRow.kind).where(
                 ArtifactRow.public_id == str(artifact_id),
                 ArtifactRow.owning_project_id == project_key,
             )
         )
-        if exists is None:
+        if kind is None:
             raise PublicationValidationError("artifact_not_found")
-        return artifact_id
+        return artifact_id, ArtifactKind(kind)
+
+    def _model_signature(
+        self,
+        artifact_kind: ArtifactKind,
+        provider_id: str,
+        commit_sha: str,
+        value: object,
+    ) -> tuple[dict[str, Any] | None, str | None]:
+        if artifact_kind is not ArtifactKind.MODEL:
+            if value is not None:
+                raise PublicationValidationError("model_signature_not_allowed")
+            return None, None
+        if not isinstance(value, dict):
+            raise PublicationValidationError("model_signature_required")
+        if value.get("format") != MODEL_SIGNATURE_FORMAT or not isinstance(
+            value.get("path"), str
+        ):
+            raise PublicationValidationError("model_signature_invalid")
+        try:
+            content = self._file(
+                provider_id,
+                commit_sha,
+                value["path"],
+                not_found_code="model_signature_not_found",
+            )
+            return parse_model_signature(content)
+        except PublicationValidationError:
+            raise
+        except ValueError as error:
+            raise PublicationValidationError("model_signature_invalid") from error
 
     def _repository(self, project_id: PublicId, value: object) -> str:
         project_key = self._project_key(project_id)
@@ -181,8 +220,18 @@ class GitLabDvcPublicationValidator:
             raise PublicationValidationError("commit_not_found")
         response.raise_for_status()
 
-    def _file(self, provider_id: str, commit_sha: str, path: str) -> bytes:
-        safe_path = normalize_artifact_path(path)
+    def _file(
+        self,
+        provider_id: str,
+        commit_sha: str,
+        path: str,
+        *,
+        not_found_code: str = "selector_not_found",
+    ) -> bytes:
+        try:
+            safe_path = normalize_artifact_path(path)
+        except ValueError as error:
+            raise PublicationValidationError("unsafe_path") from error
         url = (
             f"{self._gitlab_url}/api/v4/projects/{quote(provider_id, safe='')}/repository/"
             f"files/{quote(safe_path, safe='')}/raw"
@@ -191,7 +240,7 @@ class GitLabDvcPublicationValidator:
             url, headers=self._gitlab_headers, params={"ref": commit_sha}, timeout=20
         )
         if response.status_code == 404:
-            raise PublicationValidationError("selector_not_found")
+            raise PublicationValidationError(not_found_code)
         response.raise_for_status()
         return response.content
 

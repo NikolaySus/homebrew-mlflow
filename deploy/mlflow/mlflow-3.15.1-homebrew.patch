@@ -192,13 +192,85 @@ index 7bb3bb94b..3cd25bc61 100644
        <Descriptions columns={1} data-testid="model-view-tags">
          <Descriptions.Item label="Tags">
 -          <TagList tags={this.getTags()} onEdit={this.handleEditTags} />
-+          {this.getTags().map((tag) => (
++          {this.getTags().filter((tag) => tag.key !== 'homebrew.provenance').map((tag) => (
 +            <KeyValueTag key={tag.key} tag={tag} />
 +          ))}
          </Descriptions.Item>
        </Descriptions>
      );
-@@ -586,12 +588,7 @@ export class ModelVersionViewImpl extends React.Component<ModelVersionViewImplPr
+@@ -153,6 +155,70 @@ export class ModelVersionViewImpl extends React.Component<ModelVersionViewImplPr
+       'name',
+     );
+-
++
++  renderHomebrewProvenance() {
++    const tag = Object.values(this.props.tags).find((value: any) => value.key === 'homebrew.provenance') as
++      | { value: string }
++      | undefined;
++    if (!tag) return null;
++    let provenance: any;
++    try {
++      provenance = JSON.parse(tag.value);
++    } catch {
++      return null;
++    }
++    const artifactLink = (value: any) =>
++      `/?project=${encodeURIComponent(provenance.project_id)}&artifact=${encodeURIComponent(
++        value.artifact_id,
++      )}&version=${encodeURIComponent(value.id)}`;
++    const runLink = provenance.run_id
++      ? `/mlflow/#/experiments/${encodeURIComponent(provenance.experiment_id)}/runs/${encodeURIComponent(
++          provenance.run_id,
++        )}`
++      : null;
++    return (
++      <CollapsibleSection title="Homebrew provenance" data-testid="homebrew-model-provenance-section">
++        <div css={{ display: 'grid', gap: 8 }}>
++          <div>
++            Artifact Version:{' '}
++            <a href={artifactLink(provenance.current)}>{provenance.current.id}</a>
++          </div>
++          {runLink && (
++            <div>
++              Producing run: <a href={runLink}>{provenance.run_id}</a>{' '}
++              (<a href={`${runLink}?selectedTab=artifacts`}>attachments</a>)
++            </div>
++          )}
++          <div>
++            Inputs:{' '}
++            {provenance.inputs.length
++              ? provenance.inputs.map((value: any, index: number) => (
++                  <React.Fragment key={value.id}>
++                    {index > 0 && ', '}
++                    <a href={artifactLink(value)}>
++                      {value.artifact_name} v{value.sequence}
++                    </a>
++                  </React.Fragment>
++                ))
++              : 'none'}
++          </div>
++          <div>
++            Other outputs:{' '}
++            {provenance.outputs.length
++              ? provenance.outputs.map((value: any, index: number) => (
++                  <React.Fragment key={value.id}>
++                    {index > 0 && ', '}
++                    <a href={artifactLink(value)}>
++                      {value.artifact_name} v{value.sequence}
++                    </a>
++                  </React.Fragment>
++                ))
++              : 'none'}
++          </div>
++        </div>
++      </CollapsibleSection>
++    );
++  }
++
+   handleCloseTagAssignmentModal = () => {
+     this.setState({ isTagAssignmentModalVisible: false, tagSavingError: undefined });
+   };
+@@ -586,12 +652,7 @@ export class ModelVersionViewImpl extends React.Component<ModelVersionViewImplPr
          disabled: ACTIVE_STAGES.includes(this.props.modelVersion.current_stage),
        },
      ];
@@ -212,7 +284,16 @@ index 7bb3bb94b..3cd25bc61 100644
    }
  
    render() {
-@@ -660,7 +657,6 @@ export class ModelVersionViewImpl extends React.Component<ModelVersionViewImplPr
+@@ -644,6 +705,7 @@ export class ModelVersionViewImpl extends React.Component<ModelVersionViewImplPr
+         {/* Metadata List */}
+         {this.renderMetadata(modelVersion)}
+         {this.renderTags()}
++        {this.renderHomebrewProvenance()}
+-
++
+         {/* New models UI switch */}
+         {shouldShowModelsNextUI() && (
+@@ -660,7 +722,6 @@ export class ModelVersionViewImpl extends React.Component<ModelVersionViewImplPr
                  defaultMessage="Description"
                  description="Title text for the description section on the model version view page"
                />{' '}
@@ -220,7 +301,7 @@ index 7bb3bb94b..3cd25bc61 100644
              </span>
            }
            forceOpen={showDescriptionEditor}
-@@ -674,30 +670,6 @@ export class ModelVersionViewImpl extends React.Component<ModelVersionViewImplPr
+@@ -674,30 +735,6 @@ export class ModelVersionViewImpl extends React.Component<ModelVersionViewImplPr
              showEditor={showDescriptionEditor}
            />
          </CollapsibleSection>

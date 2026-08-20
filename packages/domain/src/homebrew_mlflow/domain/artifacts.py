@@ -145,6 +145,8 @@ class ArtifactVersion:
     sequence: int = 1
     mlflow_model_id: str = ""
     producing_run_id: PublicId | None = None
+    model_signature: dict[str, object] | None = None
+    model_signature_sha256: str | None = None
 
     def __post_init__(self) -> None:
         if self.id.kind is not ResourceKind.ARTIFACT_VERSION:
@@ -159,3 +161,10 @@ class ArtifactVersion:
             raise ValueError("invalid MLflow model identifier")
         if self.producing_run_id is not None and self.producing_run_id.kind is not ResourceKind.RUN:
             raise ValueError("invalid producing Run identifier")
+        if (self.model_signature is None) != (self.model_signature_sha256 is None):
+            raise ValueError("model signature and digest must be stored together")
+        if self.model_signature_sha256 is not None and (
+            len(self.model_signature_sha256) != 64
+            or any(character not in "0123456789abcdef" for character in self.model_signature_sha256)
+        ):
+            raise ValueError("invalid model signature digest")

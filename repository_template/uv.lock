@@ -1022,14 +1022,14 @@ wheels = [
 
 [[package]]
 name = "homebrew-mlflow-plugins"
-version = "0.1.5"
+version = "0.1.6"
 source = { registry = "{{ platform_url }}/packages/simple/" }
 dependencies = [
     { name = "mlflow" },
     { name = "requests" },
 ]
 wheels = [
-    { url = "{{ platform_url }}/packages/files/homebrew_mlflow_plugins-0.1.5-py3-none-any.whl", hash = "sha256:b402e3d305ef8418b4b80b64901eeaae82abc91035d8e80da0f97289e32a24dc" },
+    { url = "{{ platform_url }}/packages/files/homebrew_mlflow_plugins-0.1.6-py3-none-any.whl", hash = "sha256:c189d28de088d57c068b59e6ab6d3536a0f76296a7e0df6dbcc8afee2e4d76b2" },
 ]
 
 [[package]]
@@ -1876,7 +1876,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "dvc", extras = ["s3"], specifier = "==3.67.1" },
-    { name = "homebrew-mlflow-plugins", specifier = "==0.1.5", index = "{{ platform_url }}/packages/simple/" },
+    { name = "homebrew-mlflow-plugins", specifier = "==0.1.6", index = "{{ platform_url }}/packages/simple/" },
     { name = "mlflow", specifier = "==3.15.1" },
 ]
 

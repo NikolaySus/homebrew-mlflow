@@ -69,9 +69,20 @@ def test_model_registry_is_a_read_only_view_of_model_artifacts(monkeypatch) -> N
             },
         ]
     }
+    snapshot = {
+        "workspace": {"project_id": "pr_01K00000000000000000000000"},
+        "runs": [
+            {
+                "id": "run_01K00000000000000000000000",
+                "experiment_id": "exp_01K00000000000000000000000",
+                "input_artifact_version_ids": [],
+                "output_artifact_version_ids": ["av_01K00000000000000000000000"],
+            }
+        ],
+    }
     monkeypatch.setattr(
         "homebrew_mlflow.mlflow_plugins.model_registry_store.requests.get",
-        lambda *_args, **_kwargs: Response(payload),
+        lambda url, **_kwargs: Response(snapshot if url.endswith("/snapshot") else payload),
     )
     workspace = "pr-01k00000000000000000000000"
     app = Flask(__name__)
@@ -81,6 +92,7 @@ def test_model_registry_is_a_read_only_view_of_model_artifacts(monkeypatch) -> N
             store = HomebrewModelRegistryStore("homebrew://platform")
             models = store.search_registered_models()
             version = store.get_model_version_by_alias("ranker", "champion")
+            download_uri = store.get_model_version_download_uri("ranker", "1")
         finally:
             clear_server_request_workspace()
 
@@ -88,3 +100,10 @@ def test_model_registry_is_a_read_only_view_of_model_artifacts(monkeypatch) -> N
     assert models[0].aliases == {"champion": "1"}
     assert version.version == "1"
     assert version.source == "homebrew-dvc://av_01K00000000000000000000000"
+    provenance = json.loads(version.tags["homebrew.provenance"])
+    assert provenance["current"]["id"] == "av_01K00000000000000000000000"
+    assert provenance["run_id"] == "run_01K00000000000000000000000"
+    assert download_uri == (
+        "homebrew-model://pr-01k00000000000000000000000/"
+        "av_01K00000000000000000000000"
+    )

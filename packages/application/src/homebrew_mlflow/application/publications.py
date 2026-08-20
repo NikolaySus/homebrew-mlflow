@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Any, Protocol
 
 from homebrew_mlflow.domain import (
+    ArtifactKind,
     AuditEvent,
     MachineScope,
     ProjectRole,
@@ -22,6 +23,8 @@ from .projects import AuthorizationDenied, ResourceConflict
 
 class PublicationUnitOfWork(Protocol):
     def project_role(self, project_id: PublicId, principal_id: PublicId) -> ProjectRole | None: ...
+
+    def artifact_kind(self, project_id: PublicId, artifact_id: PublicId) -> ArtifactKind | None: ...
 
     def find_by_idempotency_key(
         self, project_id: PublicId, key: str
@@ -70,6 +73,27 @@ class PublicationService:
         role = self._uow.project_role(project_id, actor_id)
         if role is None or not permits(role, MachineScope.PUBLISH):
             raise AuthorizationDenied("Contributor role is required to publish")
+        try:
+            artifact_id = PublicId(ResourceKind.ARTIFACT, str(request.get("artifact_id")))
+        except ValueError as error:
+            raise ValueError("Artifact does not exist") from error
+        artifact_kind = self._uow.artifact_kind(project_id, artifact_id)
+        if artifact_kind is None:
+            raise ValueError("Artifact does not exist")
+        signature = request.get("model_signature")
+        if artifact_kind is ArtifactKind.MODEL and signature is None:
+            raise ResourceConflict("model publications require a committed signature")
+        if artifact_kind is not ArtifactKind.MODEL and signature is not None:
+            raise ResourceConflict("only model publications accept a signature")
+        if artifact_kind is ArtifactKind.MODEL and (
+            not isinstance(signature, dict)
+            or set(signature) != {"path", "format"}
+            or not isinstance(signature.get("path"), str)
+            or not signature["path"]
+            or len(signature["path"]) > 500
+            or signature.get("format") != "homebrew-mlflow-signature-v1"
+        ):
+            raise ResourceConflict("model signature reference is invalid")
         normalized = json.dumps(
             request, ensure_ascii=False, separators=(",", ":"), sort_keys=True
         ).encode("utf-8")

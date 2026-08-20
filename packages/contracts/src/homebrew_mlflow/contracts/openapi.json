@@ -865,8 +865,8 @@
       },
       "MlflowArtifactVersion": {
         "type": "object", "additionalProperties": false,
-        "required": ["id", "artifact_id", "sequence", "mlflow_model_id", "algorithm", "digest", "output_kind", "size", "file_count", "published_at", "producing_run_id"],
-        "properties": {"id": {"type": "string"}, "artifact_id": {"type": "string"}, "sequence": {"type": "integer", "minimum": 1}, "mlflow_model_id": {"type": "string"}, "algorithm": {"type": "string"}, "digest": {"type": "string"}, "output_kind": {"type": "string", "enum": ["file", "directory"]}, "size": {"type": "integer", "minimum": 0}, "file_count": {"type": "integer", "minimum": 1}, "published_at": {"type": "string", "format": "date-time"}, "producing_run_id": {"type": ["string", "null"]}}
+        "required": ["id", "artifact_id", "sequence", "mlflow_model_id", "algorithm", "digest", "output_kind", "size", "file_count", "published_at", "producing_run_id", "model_signature", "model_signature_sha256"],
+        "properties": {"id": {"type": "string"}, "artifact_id": {"type": "string"}, "sequence": {"type": "integer", "minimum": 1}, "mlflow_model_id": {"type": "string"}, "algorithm": {"type": "string"}, "digest": {"type": "string"}, "output_kind": {"type": "string", "enum": ["file", "directory"]}, "size": {"type": "integer", "minimum": 0}, "file_count": {"type": "integer", "minimum": 1}, "published_at": {"type": "string", "format": "date-time"}, "producing_run_id": {"type": ["string", "null"]}, "model_signature": {"type": ["object", "null"], "additionalProperties": true}, "model_signature_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"}}
       },
       "MlflowArtifactAlias": {
         "type": "object", "additionalProperties": false, "required": ["alias", "artifact_version_id"],
@@ -897,9 +897,14 @@
         "required": ["artifact_id", "repository_id", "commit_sha", "selector", "client"],
         "properties": {
           "artifact_id": {"type": "string"}, "repository_id": {"type": "string"}, "commit_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"}, "run_id": {"type": ["string", "null"]},
+          "model_signature": {"oneOf": [{"$ref": "#/components/schemas/ModelSignatureReference"}, {"type": "null"}]},
           "selector": {"oneOf": [{"$ref": "#/components/schemas/PipelineSelector"}, {"$ref": "#/components/schemas/StandaloneSelector"}], "discriminator": {"propertyName": "kind"}},
           "client": {"$ref": "#/components/schemas/PublicationClient"}
         }
+      },
+      "ModelSignatureReference": {
+        "type": "object", "additionalProperties": false, "required": ["path", "format"],
+        "properties": {"path": {"type": "string", "minLength": 1, "maxLength": 500}, "format": {"type": "string", "const": "homebrew-mlflow-signature-v1"}}
       },
       "CreateArtifactRequest": {
         "type": "object", "additionalProperties": false, "required": ["name"],
@@ -918,8 +923,8 @@
       },
       "ArtifactVersionResponse": {
         "type": "object", "additionalProperties": false,
-        "required": ["id", "artifact_id", "owning_project_id", "algorithm", "digest", "output_kind", "size", "file_count", "integrity", "availability", "published_at", "archived_at", "sequence", "mlflow_model_id", "producing_run_id"],
-        "properties": {"id": {"type": "string"}, "artifact_id": {"type": "string"}, "owning_project_id": {"type": "string"}, "algorithm": {"type": "string"}, "digest": {"type": "string"}, "output_kind": {"type": "string", "enum": ["file", "directory"]}, "size": {"type": "integer"}, "file_count": {"type": "integer"}, "integrity": {"type": "string"}, "availability": {"type": "string"}, "published_at": {"type": "string", "format": "date-time"}, "archived_at": {"type": ["string", "null"], "format": "date-time"}, "sequence": {"type": "integer", "minimum": 1}, "mlflow_model_id": {"type": "string"}, "producing_run_id": {"type": ["string", "null"]}}
+        "required": ["id", "artifact_id", "owning_project_id", "algorithm", "digest", "output_kind", "size", "file_count", "integrity", "availability", "published_at", "archived_at", "sequence", "mlflow_model_id", "producing_run_id", "model_signature", "model_signature_sha256"],
+        "properties": {"id": {"type": "string"}, "artifact_id": {"type": "string"}, "owning_project_id": {"type": "string"}, "algorithm": {"type": "string"}, "digest": {"type": "string"}, "output_kind": {"type": "string", "enum": ["file", "directory"]}, "size": {"type": "integer"}, "file_count": {"type": "integer"}, "integrity": {"type": "string"}, "availability": {"type": "string"}, "published_at": {"type": "string", "format": "date-time"}, "archived_at": {"type": ["string", "null"], "format": "date-time"}, "sequence": {"type": "integer", "minimum": 1}, "mlflow_model_id": {"type": "string"}, "producing_run_id": {"type": ["string", "null"]}, "model_signature": {"type": ["object", "null"], "additionalProperties": true}, "model_signature_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"}}
       },
       "SetArtifactAliasRequest": {
         "type": "object", "additionalProperties": false, "required": ["artifact_version_id"],

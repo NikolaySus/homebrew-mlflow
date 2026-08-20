@@ -48,7 +48,7 @@ class RepositoryTemplateUpgrade:
         return tuple(changed)
 
 
-_LATEST_TEMPLATE_VERSION = 7
+_LATEST_TEMPLATE_VERSION = 8
 
 
 def prepare_repository_template_upgrade(root: Path) -> RepositoryTemplateUpgrade:
@@ -89,6 +89,11 @@ def prepare_repository_template_upgrade(root: Path) -> RepositoryTemplateUpgrade
             if not isinstance(server, str) or not server.startswith(("http://", "https://")):
                 raise RuntimeError("repository server URL is missing or invalid")
             _prepare_v6_to_v7(root, content_by_path, server.rstrip("/"))
+        elif current == 7:
+            server = sentinel.get("server")
+            if not isinstance(server, str) or not server.startswith(("http://", "https://")):
+                raise RuntimeError("repository server URL is missing or invalid")
+            _prepare_v7_to_v8(root, content_by_path, server.rstrip("/"))
         current += 1
     sentinel["template_version"] = current
     content_by_path[sentinel_path] = json.dumps(sentinel, indent=2, ensure_ascii=False) + "\n"
@@ -337,6 +342,97 @@ wheels = [
         "uv.lock",
     )
     changes[lock_path] = lock
+
+
+def _prepare_v7_to_v8(
+    root: Path, changes: dict[Path, str], platform_url: str
+) -> None:
+    pyproject_path, pyproject = _pending_content(root, changes, "pyproject.toml")
+    pyproject = _replace_managed_fragment(
+        pyproject,
+        '"homebrew-mlflow-plugins==0.1.5"',
+        '"homebrew-mlflow-plugins==0.1.6"',
+        "pyproject.toml",
+    )
+    changes[pyproject_path] = pyproject
+
+    lock_path, lock = _pending_content(root, changes, "uv.lock")
+    old_wheel = (
+        f'    {{ url = "{platform_url}/packages/files/'
+        'homebrew_mlflow_plugins-0.1.5-py3-none-any.whl", '
+        'hash = "sha256:b402e3d305ef8418b4b80b64901eeaae82abc91035d8e80da0f97289e32a24dc" },'
+    )
+    old_package = f'''[[package]]
+name = "homebrew-mlflow-plugins"
+version = "0.1.5"
+source = {{ registry = "{platform_url}/packages/simple/" }}
+dependencies = [
+    {{ name = "mlflow" }},
+    {{ name = "requests" }},
+]
+wheels = [
+{old_wheel}
+]
+'''
+    new_package = old_package.replace('version = "0.1.5"', 'version = "0.1.6"', 1)
+    new_package = new_package.replace(
+        "homebrew_mlflow_plugins-0.1.5-py3-none-any.whl",
+        "homebrew_mlflow_plugins-0.1.6-py3-none-any.whl",
+    ).replace(
+        "b402e3d305ef8418b4b80b64901eeaae82abc91035d8e80da0f97289e32a24dc",
+        "c189d28de088d57c068b59e6ab6d3536a0f76296a7e0df6dbcc8afee2e4d76b2",
+    )
+    lock = _replace_managed_fragment(lock, old_package, new_package, "uv.lock")
+    old_requirement = (
+        '{ name = "homebrew-mlflow-plugins", specifier = "==0.1.5", '
+        f'index = "{platform_url}/packages/simple/" }}'
+    )
+    lock = _replace_managed_fragment(
+        lock,
+        old_requirement,
+        old_requirement.replace("==0.1.5", "==0.1.6"),
+        "uv.lock",
+    )
+    changes[lock_path] = lock
+
+    readme_path, readme = _pending_content(root, changes, "README.md")
+    marker = (
+        "AI-assisted work follows `AGENTS.md`. Review its branch, compute-cost, credential, and "
+        "publication rules\nbefore asking an agent to run an experiment."
+    )
+    guidance = (
+        "Model publications also require a committed interface sidecar. Generate it from an "
+        "inferred "
+        "or explicit\nMLflow `ModelSignature` with\n"
+        "`homebrew_mlflow.mlflow_plugins.signature.write_model_signature("
+        '"model-signature.json", signature)`,\n'
+        "commit it, and pass `--signature model-signature.json` to the publication script. "
+        "The sidecar records only\ntyped inputs and outputs; model bytes and datasets remain "
+        "canonical DVC Artifact Versions.\n\n"
+    )
+    if marker in readme:
+        readme = _replace_managed_fragment(readme, marker, guidance + marker, "README.md")
+    changes[readme_path] = readme
+
+    agents_path, agents = _pending_content(root, changes, "AGENTS.md")
+    if "   and optional Run ID:\n" in agents:
+        agents = _replace_managed_fragment(
+            agents,
+            "   and optional Run ID:\n",
+            "   and optional Run ID. For a model Artifact, also generate, review, commit, and pass "
+            "the required typed\n   input/output signature sidecar:\n",
+            "AGENTS.md",
+        )
+    command = "  --artifact <artifact-name-or-id> [--run-id <run-id>]\n```"
+    if command in agents:
+        agents = _replace_managed_fragment(
+            agents,
+            command,
+            "  --artifact <artifact-name-or-id> [--run-id <run-id>]\n"
+            "# model only: add --signature model-signature.json\n```",
+            "AGENTS.md",
+        )
+    changes[agents_path] = agents
 
 
 def read_repository_dvc_configuration(

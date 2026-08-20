@@ -42,5 +42,11 @@ family correctly before publication. To archive an immutable result,
 commit and push its Git/DVC metadata, then use `scripts/dvc-publish.sh` or
 `scripts/dvc-publish.ps1` with the selector and artifact name or ID.
 
+Model publications also require a committed interface sidecar. Generate it from an inferred or explicit
+MLflow `ModelSignature` with
+`homebrew_mlflow.mlflow_plugins.signature.write_model_signature("model-signature.json", signature)`,
+commit it, and pass `--signature model-signature.json` to the publication script. The sidecar records only
+typed inputs and outputs; model bytes and datasets remain canonical DVC Artifact Versions.
+
 AI-assisted work follows `AGENTS.md`. Review its branch, compute-cost, credential, and publication rules
 before asking an agent to run an experiment.

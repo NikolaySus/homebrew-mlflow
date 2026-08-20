@@ -1,6 +1,6 @@
 [project]
 name = "homebrew-mlflow-plugins"
-version = "0.1.5"
+version = "0.1.6"
 requires-python = ">=3.11"
 dependencies = [
   "mlflow==3.15.1",
@@ -15,6 +15,7 @@ homebrew_mlflow = "homebrew_mlflow.mlflow_plugins.run_context:HomebrewRunContext
 
 [project.entry-points."mlflow.artifact_repository"]
 homebrew = "homebrew_mlflow.mlflow_plugins.artifact_entrypoint:build_artifact_repository"
+homebrew-model = "homebrew_mlflow.mlflow_plugins.model_artifact_entrypoint:build_model_artifact_repository"
 
 [project.entry-points."mlflow.request_auth_provider"]
 homebrew_token_file = "homebrew_mlflow.mlflow_plugins.request_auth:HomebrewTokenFileAuthProvider"

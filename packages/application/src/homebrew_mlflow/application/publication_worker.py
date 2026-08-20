@@ -38,6 +38,8 @@ class ValidatedPublication:
     bucket: str
     object_key: str
     producing_run_id: PublicId | None = None
+    model_signature: dict[str, Any] | None = None
+    model_signature_sha256: str | None = None
 
     def __post_init__(self) -> None:
         normalize_file_index([item.path for item in self.files])
@@ -45,6 +47,8 @@ class ValidatedPublication:
             raise ValueError("validated file sizes do not equal the DVC output size")
         if len(self.files) != self.identity.file_count:
             raise ValueError("validated file count does not equal the DVC output count")
+        if (self.model_signature is None) != (self.model_signature_sha256 is None):
+            raise ValueError("model signature and digest must be provided together")
 
 
 class PublicationValidator(Protocol):
@@ -120,4 +124,6 @@ def artifact_version_from_validation(
         IntegrityState.VERIFIED,
         AvailabilityState.AVAILABLE,
         now,
+        model_signature=validated.model_signature,
+        model_signature_sha256=validated.model_signature_sha256,
     )

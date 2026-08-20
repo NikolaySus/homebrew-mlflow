@@ -106,6 +106,8 @@ class MlflowArtifactVersionResponse(BaseModel):
     file_count: int
     published_at: datetime
     producing_run_id: str | None
+    model_signature: dict[str, object] | None
+    model_signature_sha256: str | None
 
 
 class MlflowArtifactResponse(BaseModel):
@@ -289,6 +291,8 @@ def project_catalog(
                                 if version.producing_run_id is not None
                                 else None
                             ),
+                            model_signature=version.model_signature,
+                            model_signature_sha256=version.model_signature_sha256,
                         )
                         for version in versions
                     ],

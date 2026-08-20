@@ -10,7 +10,7 @@ from uuid import uuid4
 
 import pytest
 from homebrew_mlflow.application import PublicationValidationError
-from homebrew_mlflow.domain import PublicId, ResourceKind
+from homebrew_mlflow.domain import ArtifactKind, PublicId, ResourceKind
 from homebrew_mlflow.infrastructure import GitLabDvcPublicationValidator
 
 
@@ -127,3 +127,41 @@ def test_worker_byte_limit_is_enforced_while_streaming() -> None:
 
     with pytest.raises(PublicationValidationError, match="worker_limit_exceeded"):
         instance._verify_object("object", "md5", md5_digest(content))
+
+
+def test_model_signature_is_loaded_from_exact_commit_and_hashed() -> None:
+    instance = validator({})
+    calls: list[tuple[str, str, str]] = []
+    content = json.dumps(
+        {
+            "schema_version": 1,
+            "inputs": [{"type": "double", "name": "x"}],
+            "outputs": [{"type": "double", "name": "prediction"}],
+        }
+    ).encode()
+
+    def file(provider: str, commit: str, path: str, **_kwargs: object) -> bytes:
+        calls.append((provider, commit, path))
+        return content
+
+    instance._file = file  # type: ignore[method-assign]
+    signature, digest = instance._model_signature(
+        ArtifactKind.MODEL,
+        "group/project",
+        "a" * 40,
+        {"path": "model-signature.json", "format": "homebrew-mlflow-signature-v1"},
+    )
+    assert calls == [("group/project", "a" * 40, "model-signature.json")]
+    assert signature is not None and signature["schema_version"] == 1
+    assert digest is not None and len(digest) == 64
+
+
+def test_model_signature_is_not_accepted_for_dataset() -> None:
+    instance = validator({})
+    with pytest.raises(PublicationValidationError, match="model_signature_not_allowed"):
+        instance._model_signature(
+            ArtifactKind.DATASET,
+            "group/project",
+            "a" * 40,
+            {"path": "model-signature.json", "format": "homebrew-mlflow-signature-v1"},
+        )

@@ -13,6 +13,7 @@ from homebrew_mlflow.application import (
     EventHistoryExpired,
     PublicationService,
 )
+from homebrew_mlflow.contracts import ModelSignatureReference
 from homebrew_mlflow.domain import PublicationEvent, PublicationState, PublicId, ResourceKind
 from homebrew_mlflow.infrastructure import SqlAlchemyPublicationUnitOfWork, create_session
 from pydantic import BaseModel, ConfigDict, Field
@@ -55,6 +56,7 @@ class CreatePublicationRequest(BaseModel):
     commit_sha: str = Field(pattern="^[0-9a-f]{40}$")
     selector: PipelineSelector | StandaloneSelector = Field(discriminator="kind")
     run_id: str | None = None
+    model_signature: ModelSignatureReference | None = None
     client: PublicationClient
 
 

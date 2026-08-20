@@ -83,6 +83,8 @@ class ArtifactVersionResponse(BaseModel):
     sequence: int
     mlflow_model_id: str
     producing_run_id: str | None
+    model_signature: dict[str, object] | None
+    model_signature_sha256: str | None
 
 
 class RetentionDependenciesResponse(BaseModel):
@@ -146,6 +148,8 @@ def _version_response(version) -> ArtifactVersionResponse:  # type: ignore[no-un
         producing_run_id=(
             str(version.producing_run_id) if version.producing_run_id is not None else None
         ),
+        model_signature=version.model_signature,
+        model_signature_sha256=version.model_signature_sha256,
     )
 
 

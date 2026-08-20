@@ -111,11 +111,13 @@ Before publication:
 4. Push the immutable Git commit to its upstream branch.
 5. Confirm the relevant worktree and DVC metadata are clean.
 6. Invoke the supplied publication script with a semantic DVC selector, artifact family name or ID,
-   and optional Run ID:
+   and optional Run ID. For a model Artifact, also generate, review, commit, and pass the required typed
+   input/output signature sidecar:
 
 ```text
 scripts/dvc-publish.sh --pipeline dvc.yaml --stage <stage> --out <output> \
   --artifact <artifact-name-or-id> [--run-id <run-id>]
+# model only: add --signature model-signature.json
 ```
 
 On Windows, use the equivalent `scripts/dvc-publish.ps1` command. The publication script validates and
