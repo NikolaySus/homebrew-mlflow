@@ -495,7 +495,7 @@ class ArtifactVersionRow(Base):
     published_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     model_signature: Mapped[dict[str, Any] | None] = mapped_column(
-        JSON().with_variant(JSONB, "postgresql")
+        JSON(none_as_null=True).with_variant(JSONB(none_as_null=True), "postgresql")
     )
     model_signature_sha256: Mapped[str | None] = mapped_column(String(64))
 

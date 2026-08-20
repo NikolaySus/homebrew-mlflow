@@ -21,9 +21,19 @@ from homebrew_mlflow.infrastructure.database import (
     SqlAlchemyPublicationWorkStore,
 )
 from sqlalchemy import create_engine, event, func, select
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.orm import Session
 
 NOW = datetime(2026, 8, 19, 12, tzinfo=UTC)
+
+
+def test_absent_model_signature_binds_as_sql_null_for_postgresql() -> None:
+    dialect = postgresql.dialect()
+    column_type = ArtifactVersionRow.__table__.c.model_signature.type.dialect_impl(dialect)
+    processor = column_type.bind_processor(dialect)
+
+    assert processor is not None
+    assert processor(None) is None
 
 
 def test_publication_flushes_version_before_foreign_key_children() -> None:
@@ -122,3 +132,9 @@ def test_publication_flushes_version_before_foreign_key_children() -> None:
                 ArtifactStorageLocationRow.artifact_version_id == version_key
             )
         ) == 1
+        stored = session.scalar(
+            select(ArtifactVersionRow).where(ArtifactVersionRow.id == version_key)
+        )
+        assert stored is not None
+        assert stored.model_signature is None
+        assert stored.model_signature_sha256 is None

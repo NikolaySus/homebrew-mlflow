@@ -113,10 +113,16 @@ def test_coordinator_persists_stable_validation_failure() -> None:
     assert store.failure_code == "object_missing"
 
 
-def test_coordinator_maps_unexpected_failure_to_safe_code() -> None:
+def test_coordinator_maps_unexpected_failure_to_safe_code(caplog) -> None:  # type: ignore[no-untyped-def]
     store = Store(queued())
 
-    PublicationCoordinator(store, Validator(unexpected=True)).run_once("worker", NOW)
+    with caplog.at_level("ERROR"):
+        PublicationCoordinator(store, Validator(unexpected=True)).run_once("worker", NOW)
 
     assert store.operation is not None and store.operation.state is PublicationState.FAILED
     assert store.failure_code == "worker_failed"
+    assert any(
+        record.exc_info is not None
+        and "unexpected publication worker failure" in record.getMessage()
+        for record in caplog.records
+    )

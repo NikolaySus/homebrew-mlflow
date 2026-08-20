@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Protocol
@@ -15,6 +16,8 @@ from homebrew_mlflow.domain import (
     ResourceKind,
     normalize_file_index,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class PublicationValidationError(ValueError):
@@ -109,6 +112,10 @@ class PublicationCoordinator:
         except PublicationValidationError as error:
             self._store.fail(operation, error.code, now)
         except Exception:
+            logger.exception(
+                "unexpected publication worker failure for operation %s",
+                operation.id,
+            )
             self._store.fail(operation, "worker_failed", now)
         return True
 
