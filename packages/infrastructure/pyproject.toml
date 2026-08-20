@@ -6,6 +6,7 @@ dependencies = [
   "alembic>=1.14,<2",
   "boto3>=1.42,<2",
   "homebrew-mlflow-application",
+  "homebrew-mlflow-contracts",
   "homebrew-mlflow-domain",
   "httpx>=0.27,<1",
   "psycopg[binary]>=3.2,<4",
