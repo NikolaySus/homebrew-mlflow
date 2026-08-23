@@ -80,6 +80,8 @@ def test_recommended_release_uses_service_only_index() -> None:
     body = response.json()
     assert body["release"]["index_url"].endswith("/packages/simple/")
     assert "--default-index" in body["install_commands"]["uv"]
+    assert "--force" in body["install_commands"]["uv"]
+    assert "--no-build" in body["install_commands"]["uv"]
     assert "pypi.org" not in json.dumps(body).lower()
     assert response.headers["X-Request-ID"].startswith("req_")
 

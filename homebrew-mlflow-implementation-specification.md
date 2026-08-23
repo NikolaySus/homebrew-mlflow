@@ -457,7 +457,7 @@ V1 publication accepts only complete output roots. Immutable subpath sharing/mat
 First-time setup:
 
 ```bash
-uv tool install --default-index https://<platform-domain>/packages/simple/ homebrew-mlflow==<recommended-version>
+uv tool install --force --default-index https://<platform-domain>/packages/simple/ --no-build "homebrew-mlflow==<recommended-version>"
 # supported fallback
 pipx install --index-url https://<platform-domain>/packages/simple/ homebrew-mlflow==<recommended-version>
 
@@ -898,6 +898,9 @@ The initial UI must support:
 - exact-version project-to-project sharing and revocation;
 - derivation/fork workflow;
 - generated Bash and PowerShell consumption commands;
+- contextual, secret-free Bash and PowerShell workflow commands with accessible copy controls;
+- interactive command previews that resolve known Project, repository, Run, Artifact, and exact Artifact
+  Version values while requiring repository-specific stage and output values before copying;
 - standard `.dvc` pointer download for one exact Artifact Version;
 - publication request and durable progress/status display through the same SSE API as scripts;
 - non-secret Infisical mapping administration for Maintainers;

@@ -175,7 +175,10 @@ def create_app() -> FastAPI:
                 sha256=hashes,
             ),
             install_commands={
-                "uv": f"uv tool install --default-index {index_url} {package}",
+                "uv": (
+                    f'uv tool install --force --default-index {index_url} '
+                    f'--no-build "{package}"'
+                ),
                 "pipx": f"pipx install --index-url {index_url} {package}",
             },
         )

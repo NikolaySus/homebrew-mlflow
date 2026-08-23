@@ -1,6 +1,14 @@
 import React, { FormEvent, useEffect, useMemo, useState } from "react";
 import ReactDOM from "react-dom/client";
 import "./styles.css";
+import {
+  CommandCard,
+  CopyField,
+  PublicationCommandCard,
+  RepositorySetup,
+  RunCommandCard,
+  WorkflowGuide,
+} from "./workflow";
 
 type Project = {
   id: string;
@@ -189,7 +197,10 @@ type SharedReference = {
   run_id: string | null;
   created_at: string;
 };
-type Tab = "overview" | "runs" | "artifacts" | "access";
+type ClientReleaseResponse = {
+  install_commands: { uv: string; pipx: string };
+};
+type Tab = "overview" | "workflows" | "runs" | "artifacts" | "access";
 
 function csrfToken() {
   const value = document.cookie
@@ -256,6 +267,7 @@ export function App() {
   );
   const [machines, setMachines] = useState<MachineCredential[]>([]);
   const [machineSecret, setMachineSecret] = useState("");
+  const [clientRelease, setClientRelease] = useState<ClientReleaseResponse | null>(null);
   const [retention, setRetention] = useState<RetentionDependencies | null>(
     null,
   );
@@ -342,6 +354,10 @@ export function App() {
 
   useEffect(() => {
     refreshBrowserSession().finally(() => setSessionChecked(true));
+    fetch("/api/v1/client-releases/recommended")
+      .then((response) => response.ok ? response.json() : Promise.reject(new Error("release unavailable")))
+      .then((value: ClientReleaseResponse) => setClientRelease(value))
+      .catch(() => setClientRelease(null));
   }, []);
   useEffect(() => {
     if (!token) return;
@@ -363,6 +379,7 @@ export function App() {
     if (!projectId) return;
     setRunDetail(null);
     setVersion(null);
+    setMachineSecret("");
     setPublicationLog([]);
     Promise.all([
       request<Repository[]>(`/api/v1/projects/${projectId}/repositories`),
@@ -457,6 +474,11 @@ export function App() {
     (membership) => membership.principal_id === me?.principal_id,
   );
   const canManageArtifacts = currentMembership?.role === "maintainer";
+  const canPublish = currentMembership?.role === "maintainer" || currentMembership?.role === "contributor";
+  const installCommands = {
+    powershell: clientRelease?.install_commands.uv ?? "CLI release metadata is unavailable. Refresh this page before installing.",
+    bash: clientRelease?.install_commands.uv ?? "CLI release metadata is unavailable. Refresh this page before installing.",
+  };
   const experimentNames = useMemo(
     () => new Map(experiments.map((item) => [item.id, item.name])),
     [experiments],
@@ -1214,8 +1236,8 @@ export function App() {
                 <p className="eyebrow">{selected.slug}</p>
                 <h2>{selected.name}</h2>
               </div>
-              <div>
-                <code>{selected.id}</code>
+              <div className="headerActions">
+                <CopyField label="Project" value={selected.id} />
                 {selected.state === "active" && (
                   <button className="linkButton" onClick={openMlflow}>
                     Open in MLflow
@@ -1227,7 +1249,7 @@ export function App() {
               </div>
             </header>
             <nav className="tabs">
-              {(["overview", "runs", "artifacts", "access"] as Tab[]).map(
+              {(["overview", "workflows", "runs", "artifacts", "access"] as Tab[]).map(
                 (value) => (
                   <button
                     key={value}
@@ -1263,7 +1285,7 @@ export function App() {
                           {repo.web_url && (
                             <a href={repo.web_url}>Open in GitLab</a>
                           )}
-                          {repo.ssh_clone_url && <code>{repo.ssh_clone_url}</code>}
+                          <RepositorySetup repository={repo} />
                           {repo.failure_code && <small>{repo.failure_code}</small>}
                         </div>
                         <div className="repositoryActions">
@@ -1384,15 +1406,24 @@ export function App() {
                     </div>
                   </div>
                 </section>
-                <section className="command">
-                  <p className="label">Native workflow</p>
-                  <pre>
-                    homebrew-mlflow doctor{"\n"}homebrew-mlflow run --experiment
-                    &lt;name&gt; -- &lt;command&gt;{"\n"}uv run --frozen dvc push -r platform
-                    {"\n"}./scripts/dvc-publish.sh …
-                  </pre>
-                </section>
+                <CommandCard
+                  title="Verify this clone before running work"
+                  description="No Git status output and an unpushed count of 0 are expected. DVC transfer and publication remain separate actions."
+                  commands={{
+                    powershell: "git status --short\ngit rev-list --count '@{u}..HEAD'\nhomebrew-mlflow doctor",
+                    bash: "git status --short\ngit rev-list --count '@{u}..HEAD'\nhomebrew-mlflow doctor",
+                  }}
+                />
               </div>
+            )}
+            {tab === "workflows" && (
+              <WorkflowGuide
+                install={installCommands}
+                installAvailable={Boolean(clientRelease)}
+                repository={repositories.find((item) => item.state === "active")}
+                artifacts={artifacts}
+                runs={runs}
+              />
             )}
             {tab === "runs" && (
               <>
@@ -1406,6 +1437,7 @@ export function App() {
                     <code>homebrew-mlflow run --experiment &lt;name&gt; -- &lt;command&gt;</code>.
                     The CLI performs runtime capture before it creates the record.
                   </p>
+                  <RunCommandCard />
                   <div className="split">
                     <div className="runList">
                       {runs.map((run) => (
@@ -1440,16 +1472,22 @@ export function App() {
               <>
                 <section>
                   <Title title="Artifact catalog" count={artifacts.length} />
-                  <form className="inlineForm" onSubmit={createArtifact}>
-                    <input name="name" placeholder="Artifact family name" required />
-                    <select name="kind" defaultValue="generic">
-                      {(["dataset", "model", "checkpoint", "report", "generic"] as ArtifactKind[]).map((kind) => (
-                        <option key={kind}>{kind}</option>
-                      ))}
-                    </select>
-                    <input name="description" placeholder="Description (optional)" />
-                    <button>Create artifact family</button>
-                  </form>
+                  <p className="hint">
+                    Artifact families classify durable outputs. Publishing registers an exact committed
+                    DVC version; it never runs training or uploads through the browser.
+                  </p>
+                  {canPublish && (
+                    <form className="inlineForm" onSubmit={createArtifact}>
+                      <input name="name" placeholder="Artifact family name" required />
+                      <select name="kind" defaultValue="generic">
+                        {(["dataset", "model", "checkpoint", "report", "generic"] as ArtifactKind[]).map((kind) => (
+                          <option key={kind}>{kind}</option>
+                        ))}
+                      </select>
+                      <input name="description" placeholder="Description (optional)" />
+                      <button>Create artifact family</button>
+                    </form>
+                  )}
                   <label className="field">
                     Kind
                     <select
@@ -1546,6 +1584,12 @@ export function App() {
                         ))}
                       </div>
                     </div>
+                  )}
+                  {artifactId && canPublish && artifacts.find((item) => item.id === artifactId) && (
+                    <PublicationCommandCard
+                      artifact={artifacts.find((item) => item.id === artifactId)!}
+                      runs={runs}
+                    />
                   )}
                   {version && (
                     <VersionInspector
@@ -1681,11 +1725,16 @@ export function App() {
                 <section>
                   <Title title="Machine principals" count={machines.length} />
                   {machineSecret && (
-                    <div className="error">
+                    <div className="oneTimeSecret">
                       <strong>
                         Copy this secret now; it will not be shown again.
                       </strong>
-                      <pre>{machineSecret}</pre>
+                      <CopyField
+                        label="Machine secret"
+                        value={machineSecret}
+                        secret
+                        onClear={() => setMachineSecret("")}
+                      />
                     </div>
                   )}
                   <div className="table">
@@ -1783,32 +1832,30 @@ function RunInspector({ detail }: { detail: RunDetail }) {
     <article className="inspector">
       <div>
         <span className={`state ${detail.run.state}`}>{detail.run.state}</span>
-        <code>{detail.run.id}</code>
       </div>
-      <p>
-        <strong>Command</strong> {detail.run.command.join(" ")}
-      </p>
-      <p>
-        <strong>Source commit</strong>{" "}
-        <code>{detail.git_commit_sha ?? "not finalized"}</code>
-      </p>
+      <CopyField label="Run ID" value={detail.run.id} />
+      <CopyField label="Recorded command" value={detail.run.command.join(" ")} />
+      {detail.git_commit_sha ? (
+        <CopyField label="Source commit" value={detail.git_commit_sha} />
+      ) : <p className="muted">Source commit not finalized.</p>}
       <p>
         <strong>Provenance</strong> {detail.provenance_status}
       </p>
       {detail.dvc_experiment_revision && (
-        <p>
-          <strong>DVC experiment</strong>{" "}
-          <code>{detail.dvc_experiment_revision}</code>
-        </p>
+        <CopyField label="DVC experiment" value={detail.dvc_experiment_revision} />
       )}
-      <p>
-        <strong>Inputs</strong>{" "}
-        {detail.input_artifact_version_ids.join(", ") || "none"}
-      </p>
-      <p>
-        <strong>Outputs</strong>{" "}
-        {detail.output_artifact_version_ids.join(", ") || "none"}
-      </p>
+      <div className="provenanceList">
+        <strong>Inputs</strong>
+        {detail.input_artifact_version_ids.length ? detail.input_artifact_version_ids.map((value) => (
+          <CopyField key={value} label="Input version" value={value} />
+        )) : "none"}
+      </div>
+      <div className="provenanceList">
+        <strong>Outputs</strong>
+        {detail.output_artifact_version_ids.length ? detail.output_artifact_version_ids.map((value) => (
+          <CopyField key={value} label="Output version" value={value} />
+        )) : "none"}
+      </div>
       {metricNames.map((name) => (
         <MetricChart
           key={name}
@@ -1872,7 +1919,9 @@ function VersionInspector({
 }) {
   return (
     <article className="inspector versionInspector">
-      <h3>{version.id}</h3>
+      <h3>Artifact Version {version.sequence}</h3>
+      <CopyField label="Exact version" value={version.id} />
+      {version.producing_run_id && <CopyField label="Producing Run" value={version.producing_run_id} />}
       {retention && (
         <p className="statusline">
           <strong>Retention blockers:</strong>{" "}
@@ -1932,13 +1981,16 @@ function VersionInspector({
         </div>
       </div>
       {consumption && (
-        <div className="command">
-          <p className="label">Bash consumption</p>
-          <pre>{consumption.bash_commands.join("\n")}</pre>
-          <p className="label">PowerShell</p>
-          <pre>{consumption.powershell_commands.join("\n")}</pre>
-        </div>
+        <CommandCard
+          title="Materialize this exact version"
+          description="This creates a local DVC pointer and project-local remote configuration without exposing credentials."
+          commands={{
+            bash: consumption.bash_commands.join("\n"),
+            powershell: consumption.powershell_commands.join("\n"),
+          }}
+        />
       )}
+      <RunCommandCard initialInputVersion={version.id} />
     </article>
   );
 }
