@@ -37,6 +37,10 @@ section { margin-top: 32px; }.sectionTitle { display: flex; align-items: center;
 .overview > .commandCard { margin-top: 10px; }
 .overview > section > .sectionTitle { margin-bottom: 10px; }
 .overview > section > .sectionTitle h3 { margin: 0; }
+.tabSections { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
+.tabSections > section { margin-top: 0; }
+.tabSections > section > .sectionTitle { margin-bottom: 10px; }
+.tabSections > section > .sectionTitle h3 { margin: 0; }
 .repositoryList { overflow: hidden; border: 1px solid #294238; border-radius: 10px; background: #0b1713b8; }
 .repositoryItem { min-width: 0; display: grid; grid-template-columns: minmax(180px, .8fr) minmax(260px, 1.4fr) auto; align-items: center; gap: 12px 22px; padding: 15px 18px; border-bottom: 1px solid #294238; }
 .repositoryItem:last-child { border-bottom: 0; }

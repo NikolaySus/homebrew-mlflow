@@ -1533,7 +1533,7 @@ export function App() {
               />
             )}
             {tab === "runs" && (
-              <>
+              <div className="tabSections">
                 <section>
                   <Title
                     title="Runs"
@@ -1573,10 +1573,10 @@ export function App() {
                     )}
                   </div>
                 </section>
-              </>
+              </div>
             )}
             {tab === "artifacts" && (
-              <>
+              <div className="tabSections">
                 <section>
                   <Title title="Artifact catalog" count={artifacts.length} />
                   <p className="hint">
@@ -1733,10 +1733,10 @@ export function App() {
                     published outputs instead of being entered as raw IDs.
                   </p>
                 </section>
-              </>
+              </div>
             )}
             {tab === "access" && (
-              <>
+              <div className="tabSections">
                 <section>
                   <Title
                     title="Project membership"
@@ -1915,7 +1915,7 @@ export function App() {
                     ))}
                   </div>
                 </section>
-              </>
+              </div>
             )}
           </>
         )}
