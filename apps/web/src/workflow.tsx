@@ -348,7 +348,7 @@ export function WorkflowGuide({ install, installAvailable, repository, artifacts
   ];
   return (
     <section className="workflowGuide" aria-label="Tested workflows">
-      <div className="workflowIntro"><div><p className="eyebrow">TESTED HUMAN WORKFLOWS</p><h3>Work locally, archive exact results here</h3></div><p>These recipes never execute in the browser. Fill required values, review the generated command, then copy it into your repository terminal.</p></div>
+      <div className="workflowIntro"><div><h3>Work locally, archive exact results here</h3></div><p>These recipes never execute in the browser. Fill required values, review the generated command, then copy it into your repository terminal.</p></div>
       <details open><summary>1. Install and configure</summary><div className="workflowBody"><CommandCard title="Install or update the CLI" description="The CLI is isolated from experiment environments and installed from this service." commands={setup} disabledReason={installAvailable ? undefined : "Recommended release metadata is unavailable. Refresh before copying an installation command."} />{repository && <CommandCard title="Clone and configure this repository" commands={repositorySetupCommands(repository)} />}</div></details>
       <details><summary>2. Prepare and verify the repository</summary><div className="workflowBody">{staticCommands.slice(0, 2).map((item) => <CommandCard key={item.title} {...item} />)}<div className="interactiveRecipe"><BranchCommandCard /></div></div></details>
       <details><summary>3. Run an experiment with immutable inputs</summary><div className="workflowBody"><RunCommandCard /></div></details>
