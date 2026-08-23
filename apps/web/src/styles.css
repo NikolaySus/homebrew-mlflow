@@ -116,8 +116,8 @@ section { margin-top: 32px; }.sectionTitle { display: flex; align-items: center;
 .recipeField input[aria-invalid="true"] { border-color: #a85b53; }
 .artifactChoice { max-width: 520px; margin-bottom: 14px; }
 .workflowGuide { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
-.workflowIntro { display: grid; grid-template-columns: minmax(300px, 4fr) minmax(320px, 3fr); align-items: end; gap: 30px; margin-bottom: 0; }
-.workflowIntro h3 { margin: 0; font-family: Georgia, serif; font-size: 2rem; font-weight: 500; }
+.workflowIntro { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: end; gap: 30px; margin-bottom: 0; }
+.workflowIntro h4 { margin: 0; font-family: Georgia, serif; font-size: 1.25rem; font-weight: 500; }
 .workflowIntro > p { margin: 0; color: #90a49b; line-height: 1.55; }
 .workflowGuide > details { margin-top: 0; border: 1px solid #294238; border-radius: 10px; background: #0b1713b8; overflow: hidden; }
 .workflowGuide > details > summary { cursor: pointer; padding: 15px 18px; color: #d5e5de; font-weight: 700; list-style-position: inside; }
@@ -143,7 +143,7 @@ section { margin-top: 32px; }.sectionTitle { display: flex; align-items: center;
   .recipeFields { grid-template-columns: 1fr; }
   .shellTabs { width: 100%; }
   .shellTabs button, .shellTabs.sharedShell span { flex: 1; text-align: center; }
-  .workflowIntro h3 { font-size: 1.65rem; }
+  .workflowIntro h4 { font-size: 1.15rem; }
   .homeLanding { margin-top: 28px; }
   .homeSetupHeader { align-items: flex-start; flex-direction: column; gap: 10px; }
 }
