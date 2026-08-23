@@ -901,6 +901,8 @@ The initial UI must support:
 - contextual, secret-free Bash and PowerShell workflow commands with accessible copy controls;
 - interactive command previews that resolve known Project, repository, Run, Artifact, and exact Artifact
   Version values while requiring repository-specific stage and output values before copying;
+- an authenticated project-chooser landing state with the advertised service-hosted CLI installation
+  command, instance-specific login command, accessible copy controls, and read-only API reference link;
 - standard `.dvc` pointer download for one exact Artifact Version;
 - publication request and durable progress/status display through the same SSE API as scripts;
 - non-secret Infisical mapping administration for Maintainers;

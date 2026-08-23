@@ -8,6 +8,8 @@ import {
   RepositorySetup,
   RunCommandCard,
   WorkflowGuide,
+  quoteBash,
+  quotePowerShell,
 } from "./workflow";
 
 type Project = {
@@ -216,6 +218,52 @@ export function suggestSlug(name: string) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "");
+}
+
+export function ProjectChooser({ hasProjects, installCommand, installAvailable }: {
+  hasProjects: boolean;
+  installCommand: string;
+  installAvailable: boolean;
+}) {
+  const server = window.location.origin;
+  const commands = {
+    powershell: `${installCommand}\nhomebrew-mlflow version\nhomebrew-mlflow login --server ${quotePowerShell(server)}`,
+    bash: `${installCommand}\nhomebrew-mlflow version\nhomebrew-mlflow login --server ${quoteBash(server)}`,
+  };
+  return (
+    <div className="homeLanding" role="region" aria-label="Project chooser">
+      <div className="homeIntro">
+        <p className="eyebrow">RESEARCH ARCHIVE</p>
+        <h2>{hasProjects ? "Choose a research project" : "No research projects yet"}</h2>
+        <p>
+          {hasProjects
+            ? "Select a project in the sidebar to open its repositories, Runs, artifacts, and project-specific workflows."
+            : "Create the first project to provision its private repository and project-specific workflow."}
+        </p>
+      </div>
+      <section className="homeSetup">
+        <div className="homeSetupHeader">
+          <div>
+            <p className="label">MACHINE SETUP</p>
+            <h3>Install the CLI and sign in once</h3>
+          </div>
+          <a className="resourceLink" href="/docs" target="_blank" rel="noreferrer">
+            API reference
+          </a>
+        </div>
+        <p className="hint">
+          Install the service-hosted CLI globally. Login opens the GitLab device flow and stores no
+          credentials in a research repository.
+        </p>
+        <CommandCard
+          compact
+          title="Set up this machine"
+          commands={commands}
+          disabledReason={installAvailable ? undefined : "Recommended release metadata is unavailable. Refresh before copying this command."}
+        />
+      </section>
+    </div>
+  );
 }
 
 export function App() {
@@ -1214,7 +1262,7 @@ export function App() {
             + New project
           </button>
         )}
-        <a className="docs" href="/docs">
+        <a className="docs" href="/docs" target="_blank" rel="noreferrer">
           API reference
         </a>
         <button
@@ -1235,13 +1283,11 @@ export function App() {
         {(showProjectForm || (!selected && projects.length === 0 && canCreateProject)) &&
           projectForm}
         {!selected ? (
-          <div className="empty">
-            <h2>{projects.length ? "Choose a research project" : "No research projects yet"}</h2>
-            <p>
-              Runs and immutable outputs stay grouped by their canonical
-              project.
-            </p>
-          </div>
+          <ProjectChooser
+            hasProjects={projects.length > 0}
+            installCommand={installCommands.powershell}
+            installAvailable={Boolean(clientRelease)}
+          />
         ) : (
           <>
             <header>

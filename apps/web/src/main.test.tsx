@@ -3,10 +3,11 @@
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { App, suggestSlug } from "./main";
+import { App, ProjectChooser, suggestSlug } from "./main";
 
 afterEach(() => {
   cleanup();
+  window.localStorage.clear();
   vi.unstubAllGlobals();
 });
 
@@ -195,5 +196,39 @@ describe("project onboarding", () => {
     expect(await screen.findByRole("heading", { name: "Choose a research project" })).not.toBeNull();
     expect(window.location.pathname).toBe("/");
     expect(window.location.search).toBe("");
+  });
+});
+
+describe("project chooser onboarding", () => {
+  it("shows instance-specific machine setup and the API reference without project workflows", () => {
+    render(
+      <ProjectChooser
+        hasProjects
+        installCommand={'uv tool install --force --no-build "homebrew-mlflow==0.2.9"'}
+        installAvailable
+      />,
+    );
+
+    const command = screen.getByLabelText("Set up this machine command") as HTMLTextAreaElement;
+    expect(command.value).toContain("uv tool install --force --no-build");
+    expect(command.value).toContain("homebrew-mlflow version");
+    expect(command.value).toContain("homebrew-mlflow login --server 'http://localhost:3000'");
+    const docs = screen.getByRole("link", { name: "API reference" });
+    expect(docs.getAttribute("href")).toBe("/docs");
+    expect(docs.getAttribute("target")).toBe("_blank");
+    expect(screen.queryByRole("link", { name: /workflows/i })).toBeNull();
+  });
+
+  it("does not allow copying fallback text when release metadata is unavailable", () => {
+    render(
+      <ProjectChooser
+        hasProjects={false}
+        installCommand="CLI release metadata is unavailable."
+        installAvailable={false}
+      />,
+    );
+
+    expect((screen.getByRole("button", { name: /^Copy/ }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText(/Recommended release metadata is unavailable/)).not.toBeNull();
   });
 });
