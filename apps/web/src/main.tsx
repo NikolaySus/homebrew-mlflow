@@ -266,6 +266,40 @@ export function ProjectChooser({ hasProjects, installCommand, installAvailable }
   );
 }
 
+type DatedRecord = { id: string; created_at: string };
+
+export function CompactMetadataList<T extends DatedRecord>({ items, label, renderItem }: {
+  items: T[];
+  label: string;
+  renderItem: (item: T) => React.ReactNode;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const sorted = useMemo(() => [...items].sort((left, right) => {
+    const leftTime = Date.parse(left.created_at);
+    const rightTime = Date.parse(right.created_at);
+    const timestampOrder = (Number.isNaN(rightTime) ? 0 : rightTime) - (Number.isNaN(leftTime) ? 0 : leftTime);
+    return timestampOrder || right.id.localeCompare(left.id);
+  }), [items]);
+  const hasMore = sorted.length > 3;
+  const visible = expanded ? sorted : sorted.slice(0, 3);
+  return (
+    <div className="metadataList">
+      {visible.map(renderItem)}
+      {hasMore && (
+        <button
+          type="button"
+          className="metadataDisclosure"
+          aria-expanded={expanded}
+          aria-label={expanded ? `Show fewer ${label}` : `Show all ${sorted.length} ${label}`}
+          onClick={() => setExpanded((value) => !value)}
+        >
+          <span aria-hidden="true">{expanded ? "⌃" : "…  ⌄"}</span>
+        </button>
+      )}
+    </div>
+  );
+}
+
 export function App() {
   const initialQuery = useMemo(() => new URLSearchParams(window.location.search), []);
   const [token, setToken] = useState("");
@@ -1378,8 +1412,11 @@ export function App() {
                   <div className="overviewInfoGroup">
                     <Title title="Experiments" count={experiments.length} />
                     <div className="overviewInfoBody">
-                      <div className="metadataList">
-                        {experiments.map((experiment) => (
+                      <CompactMetadataList
+                        key={`${projectId}-experiments`}
+                        items={experiments}
+                        label="experiments"
+                        renderItem={(experiment) => (
                           <div className="metadataItem" key={experiment.id}>
                             <strong>{experiment.name}</strong>
                             <code>{experiment.id}</code>
@@ -1393,8 +1430,8 @@ export function App() {
                               archive
                             </button>
                           </div>
-                        ))}
-                      </div>
+                        )}
+                      />
                       {experiments.length === 0 && (
                         <p className="hint compactHint">
                           Experiments appear when the first Run is created.
@@ -1408,8 +1445,11 @@ export function App() {
                       count={pipelines.length}
                     />
                     <div className="overviewInfoBody">
-                      <div className="metadataList">
-                        {pipelines.map((pipeline) => (
+                      <CompactMetadataList
+                        key={`${projectId}-pipeline-definitions`}
+                        items={pipelines}
+                        label="pipeline definitions"
+                        renderItem={(pipeline) => (
                           <button
                             className="metadataItem metadataButton"
                             key={pipeline.id}
@@ -1423,10 +1463,12 @@ export function App() {
                           >
                             <strong>{pipeline.name}</strong>
                             <code>{pipeline.id}</code>
-                            <small>view immutable versions</small>
+                            <small>
+                              {new Date(pipeline.created_at).toLocaleString()} · view immutable versions
+                            </small>
                           </button>
-                        ))}
-                      </div>
+                        )}
+                      />
                       <p className="hint compactHint">
                         Discovered from committed <code>dvc.yaml</code> files when
                         Runs finalize.
@@ -1448,16 +1490,21 @@ export function App() {
                       count={environments.length}
                     />
                     <div className="overviewInfoBody">
-                      <div className="metadataList">
-                        {environments.map((item) => (
+                      <CompactMetadataList
+                        key={`${projectId}-environment-specifications`}
+                        items={environments}
+                        label="environment specifications"
+                        renderItem={(item) => (
                           <div className="metadataItem" key={item.id}>
                             <strong>{item.name}</strong>
                             <span className="state compactState">{item.kind}</span>
                             <code>{item.id}</code>
-                            <small>sha256:{item.sha256.slice(0, 12)}</small>
+                            <small>
+                              {new Date(item.created_at).toLocaleString()} · sha256:{item.sha256.slice(0, 12)}
+                            </small>
                           </div>
-                        ))}
-                      </div>
+                        )}
+                      />
                       <p className="hint compactHint">
                         Captured from the runtime by <code>homebrew-mlflow run</code>
                         {" "}and named in <code>homebrew-mlflow.toml</code>.

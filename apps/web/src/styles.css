@@ -60,6 +60,8 @@ section { margin-top: 32px; }.sectionTitle { display: flex; align-items: center;
 .metadataButton { width: 100%; font: inherit; background: transparent; border: 0; text-align: left; cursor: pointer; }
 .metadataButton:hover { background: #102019; }
 .metadataButton:focus-visible { outline: 1px solid #76d4ad; outline-offset: 3px; }
+.metadataDisclosure { width: 100%; min-height: 30px; border: 0; border-top: 1px solid #1e332b; padding: 4px 10px; color: #789087; background: transparent; font-size: 1rem; letter-spacing: .14em; }
+.metadataDisclosure:hover, .metadataDisclosure:focus-visible { color: #baf1d9; background: #102019; }
 .compactState { margin-top: 0; flex: 0 0 auto; }
 .compactHint { max-width: none; margin: 6px 0 0; line-height: 1.45; }
 .versionSummary { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px 14px; padding: 8px 0 0; color: #90a49b; }

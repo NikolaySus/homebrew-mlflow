@@ -3,7 +3,7 @@
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { App, ProjectChooser, suggestSlug } from "./main";
+import { App, CompactMetadataList, ProjectChooser, suggestSlug } from "./main";
 
 afterEach(() => {
   cleanup();
@@ -230,5 +230,59 @@ describe("project chooser onboarding", () => {
 
     expect((screen.getByRole("button", { name: /^Copy/ }) as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByText(/Recommended release metadata is unavailable/)).not.toBeNull();
+  });
+});
+
+describe("compact Overview metadata", () => {
+  const records = [
+    { id: "record-2", created_at: "2026-08-22T10:00:00Z" },
+    { id: "record-4", created_at: "2026-08-24T10:00:00Z" },
+    { id: "record-1", created_at: "2026-08-21T10:00:00Z" },
+    { id: "record-3", created_at: "2026-08-23T10:00:00Z" },
+  ];
+
+  it("shows the newest three, then expands and collapses the complete sorted list", async () => {
+    const user = userEvent.setup();
+    render(
+      <CompactMetadataList
+        items={records}
+        label="records"
+        renderItem={(item) => <div key={item.id} data-testid="metadata-record">{item.id}</div>}
+      />,
+    );
+
+    expect(screen.getAllByTestId("metadata-record").map((item) => item.textContent)).toEqual([
+      "record-4",
+      "record-3",
+      "record-2",
+    ]);
+    expect(screen.queryByText("record-1")).toBeNull();
+    const expand = screen.getByRole("button", { name: "Show all 4 records" });
+    expect(expand.getAttribute("aria-expanded")).toBe("false");
+    expect(expand.textContent).toContain("…");
+
+    await user.click(expand);
+    expect(screen.getAllByTestId("metadata-record").map((item) => item.textContent)).toEqual([
+      "record-4",
+      "record-3",
+      "record-2",
+      "record-1",
+    ]);
+    const collapse = screen.getByRole("button", { name: "Show fewer records" });
+    expect(collapse.getAttribute("aria-expanded")).toBe("true");
+    await user.click(collapse);
+    expect(screen.getAllByTestId("metadata-record")).toHaveLength(3);
+  });
+
+  it("does not show a disclosure for three records", () => {
+    render(
+      <CompactMetadataList
+        items={records.slice(0, 3)}
+        label="records"
+        renderItem={(item) => <div key={item.id}>{item.id}</div>}
+      />,
+    );
+
+    expect(screen.queryByRole("button", { name: /records/ })).toBeNull();
   });
 });
