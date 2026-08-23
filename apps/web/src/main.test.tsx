@@ -173,6 +173,7 @@ describe("project onboarding", () => {
     await user.click(screen.getByRole("button", { name: "Create and provision" }));
 
     await screen.findByRole("link", { name: "Open in GitLab" });
+    expect(screen.queryByText("protein-folding")).toBeNull();
     expect(screen.getByText("git@git.example:research/protein-folding.git")).not.toBeNull();
     const repositoryList = screen.getByRole("list");
     expect(within(repositoryList).getAllByRole("listitem")).toHaveLength(1);

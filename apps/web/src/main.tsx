@@ -1328,7 +1328,6 @@ export function App() {
           <>
             <header>
               <div>
-                <p className="eyebrow">{selected.slug}</p>
                 <h2>{selected.name}</h2>
               </div>
               <div className="headerActions">
