@@ -115,8 +115,8 @@ section { margin-top: 32px; }.sectionTitle { display: flex; align-items: center;
 .recipeField input, .recipeField select { width: 100%; min-width: 0; padding: 10px 11px; border: 1px solid #355348; border-radius: 7px; color: #e8f0ec; background: #111f1a; }
 .recipeField input[aria-invalid="true"] { border-color: #a85b53; }
 .artifactChoice { max-width: 520px; margin-bottom: 14px; }
-.workflowGuide { display: flex; flex-direction: column; gap: 10px; margin-top: 26px; }
-.workflowIntro { display: grid; grid-template-columns: minmax(300px, 2fr) minmax(320px, 1fr); align-items: end; gap: 30px; margin-bottom: 0; }
+.workflowGuide { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
+.workflowIntro { display: grid; grid-template-columns: minmax(300px, 4fr) minmax(320px, 3fr); align-items: end; gap: 30px; margin-bottom: 0; }
 .workflowIntro h3 { margin: 0; font-family: Georgia, serif; font-size: 2rem; font-weight: 500; }
 .workflowIntro > p { margin: 0; color: #90a49b; line-height: 1.55; }
 .workflowGuide > details { margin-top: 0; border: 1px solid #294238; border-radius: 10px; background: #0b1713b8; overflow: hidden; }
