@@ -93,6 +93,7 @@ section { margin-top: 32px; }.sectionTitle { display: flex; align-items: center;
 .shellTabs { flex: 0 0 auto; display: flex; border: 1px solid #294238; border-radius: 7px; overflow: hidden; }
 .shellTabs button { border: 0; padding: 6px 9px; color: #789087; background: transparent; font-size: .72rem; }
 .shellTabs button.active { color: #d8f5e8; background: #1b3a2f; }
+.shellTabs.sharedShell span { padding: 6px 10px; color: #a4b8af; background: #102019; font-size: .72rem; }
 .commandField { position: relative; min-width: 0; }
 .commandField textarea { display: block; width: 100%; min-height: 76px; resize: vertical; padding: 12px 74px 12px 13px; border: 1px solid #263d35; border-radius: 8px; color: #b3c8bf; background: #07100d; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: .79rem; line-height: 1.55; white-space: pre; overflow: auto; }
 .commandField .copyButton { position: absolute; top: 8px; right: 8px; }
@@ -131,7 +132,7 @@ section { margin-top: 32px; }.sectionTitle { display: flex; align-items: center;
   .commandCard, .interactiveRecipe { padding: 12px; }
   .recipeFields { grid-template-columns: 1fr; }
   .shellTabs { width: 100%; }
-  .shellTabs button { flex: 1; }
+  .shellTabs button, .shellTabs.sharedShell span { flex: 1; text-align: center; }
   .workflowIntro h3 { font-size: 1.65rem; }
   .homeLanding { margin-top: 28px; }
   .homeSetupHeader { align-items: flex-start; flex-direction: column; gap: 10px; }

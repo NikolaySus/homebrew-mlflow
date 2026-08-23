@@ -111,7 +111,8 @@ export function CommandCard({ title, description, commands, disabledReason, comp
   compact?: boolean;
 }) {
   const [shell, setShell] = useShellPreference();
-  const command = commands[shell];
+  const sharedCommand = commands.powershell === commands.bash;
+  const command = sharedCommand ? commands.powershell : commands[shell];
   const rows = Math.max(2, Math.min(12, command.split("\n").length + 1));
   return (
     <article className={`commandCard${compact ? " compactCommand" : ""}`}>
@@ -120,9 +121,11 @@ export function CommandCard({ title, description, commands, disabledReason, comp
           <h4>{title}</h4>
           {description && <p>{description}</p>}
         </div>
-        <div className="shellTabs" role="group" aria-label={`${title} shell`}>
-          <button type="button" className={shell === "powershell" ? "active" : ""} onClick={() => setShell("powershell")}>PowerShell</button>
-          <button type="button" className={shell === "bash" ? "active" : ""} onClick={() => setShell("bash")}>Bash</button>
+        <div className={`shellTabs${sharedCommand ? " sharedShell" : ""}`} role={sharedCommand ? undefined : "group"} aria-label={`${title} shell`}>
+          {sharedCommand ? <span>PowerShell &amp; Bash</span> : <>
+            <button type="button" className={shell === "powershell" ? "active" : ""} onClick={() => setShell("powershell")}>PowerShell</button>
+            <button type="button" className={shell === "bash" ? "active" : ""} onClick={() => setShell("bash")}>Bash</button>
+          </>}
         </div>
       </div>
       <div className="commandField">

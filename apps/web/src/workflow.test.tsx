@@ -52,6 +52,15 @@ describe("workflow commands", () => {
     expect(window.localStorage.getItem("homebrew-mlflow-shell")).toBe("bash");
   });
 
+  it("labels identical commands for both shells without interactive shell controls", () => {
+    render(<CommandCard title="Shared" commands={{ powershell: "git status", bash: "git status" }} />);
+
+    expect(screen.getByText("PowerShell & Bash")).not.toBeNull();
+    expect(screen.queryByRole("button", { name: "PowerShell" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Bash" })).toBeNull();
+    expect((screen.getByLabelText("Shared command") as HTMLTextAreaElement).value).toBe("git status");
+  });
+
   it("requires complete Run inputs and preserves exact input order", async () => {
     const user = userEvent.setup();
     render(<RunCommandCard />);
