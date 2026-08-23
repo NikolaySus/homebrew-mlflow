@@ -190,5 +190,10 @@ describe("project onboarding", () => {
         "/mlflow/?workspace=pr-01k00000000000000000000000#/experiments",
       ),
     );
+
+    await user.click(screen.getByRole("button", { name: "Homebrew MLflow home" }));
+    expect(await screen.findByRole("heading", { name: "Choose a research project" })).not.toBeNull();
+    expect(window.location.pathname).toBe("/");
+    expect(window.location.search).toBe("");
   });
 });

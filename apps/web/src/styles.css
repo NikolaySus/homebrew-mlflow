@@ -10,7 +10,7 @@ form button { border: 0; background: #76d4ad; color: #092017; border-radius: 8px
 .primary { display: inline-block; margin-top: 24px; background: #76d4ad; color: #092017; text-decoration: none; border-radius: 8px; padding: 13px 18px; font-weight: 750; }
 .shell { min-height: 100vh; display: grid; grid-template-columns: 260px 1fr; }
 aside { padding: 34px 20px; background: #08110ed9; border-right: 1px solid #263d35; display: flex; flex-direction: column; gap: 8px; }
-.brand { font-family: Georgia, serif; font-size: 1.75rem; line-height: .95; margin: 0 0 44px 8px; }.label { margin: 8px; }
+.brand { width: fit-content; font-family: Georgia, serif; font-size: 1.75rem; line-height: .95; margin: 0 0 44px 8px; padding: 0; color: #e8f0ec; background: transparent; border: 0; text-align: left; }.brand:hover, .brand:focus-visible { color: #76d4ad; }.label { margin: 8px; }
 .nav, .selected, .artifact { text-align: left; color: #b8c8c1; border: 1px solid transparent; background: transparent; border-radius: 8px; padding: 11px 12px; }.selected { color: #e8f0ec; background: #183127; border-color: #355348; }.nav:hover { background: #101f1a; }.nav small, .selected small { display: block; color: #71847c; margin-top: 4px; }.logout { margin-top: auto; color: #83968e; background: transparent; border: 0; text-align: left; padding: 10px; }
 .newProject { text-align: left; color: #76d4ad; background: transparent; border: 1px dashed #355348; border-radius: 8px; padding: 11px 12px; margin-top: 6px; }.newProject:hover { background: #101f1a; }
 .docs { color: #76d4ad; text-decoration: none; margin: auto 10px 0; font-size: .85rem; }.docs + .logout { margin-top: 0; }

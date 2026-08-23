@@ -465,6 +465,19 @@ export function App() {
   function showError(value: unknown) {
     setError(String(value));
   }
+
+  function openHome() {
+    setProjectId("");
+    setShowProjectForm(false);
+    setTab("overview");
+    setArtifactId("");
+    setVersion(null);
+    setRunDetail(null);
+    setMachineSecret("");
+    setError("");
+    window.history.replaceState(null, "", "/");
+  }
+
   const selected = projects.find((project) => project.id === projectId);
   const organizationRole = me?.organizations.find(
     (binding) => binding.resource_id === organization?.id,
@@ -1175,11 +1188,11 @@ export function App() {
   return (
     <div className="shell">
       <aside>
-        <p className="brand">
+        <button type="button" className="brand" onClick={openHome} aria-label="Homebrew MLflow home">
           Homebrew
           <br />
           MLflow
-        </p>
+        </button>
         <p className="label">Research projects</p>
         {projects.map((project) => (
           <button
