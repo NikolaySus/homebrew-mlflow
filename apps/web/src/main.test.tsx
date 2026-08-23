@@ -241,7 +241,7 @@ describe("compact Overview metadata", () => {
     { id: "record-3", created_at: "2026-08-23T10:00:00Z" },
   ];
 
-  it("shows the newest three, then expands and collapses the complete sorted list", async () => {
+  it("shows the newest two, then expands and collapses the complete sorted list", async () => {
     const user = userEvent.setup();
     render(
       <CompactMetadataList
@@ -254,12 +254,13 @@ describe("compact Overview metadata", () => {
     expect(screen.getAllByTestId("metadata-record").map((item) => item.textContent)).toEqual([
       "record-4",
       "record-3",
-      "record-2",
     ]);
+    expect(screen.getByText("…and 2 more")).not.toBeNull();
+    expect(screen.queryByText("record-2")).toBeNull();
     expect(screen.queryByText("record-1")).toBeNull();
     const expand = screen.getByRole("button", { name: "Show all 4 records" });
     expect(expand.getAttribute("aria-expanded")).toBe("false");
-    expect(expand.textContent).toContain("…");
+    expect(expand.textContent).toBe("⌄");
 
     await user.click(expand);
     expect(screen.getAllByTestId("metadata-record").map((item) => item.textContent)).toEqual([
@@ -270,14 +271,15 @@ describe("compact Overview metadata", () => {
     ]);
     const collapse = screen.getByRole("button", { name: "Show fewer records" });
     expect(collapse.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByText("All 4 shown")).not.toBeNull();
     await user.click(collapse);
-    expect(screen.getAllByTestId("metadata-record")).toHaveLength(3);
+    expect(screen.getAllByTestId("metadata-record")).toHaveLength(2);
   });
 
-  it("does not show a disclosure for three records", () => {
+  it("does not show a disclosure for two records", () => {
     render(
       <CompactMetadataList
-        items={records.slice(0, 3)}
+        items={records.slice(0, 2)}
         label="records"
         renderItem={(item) => <div key={item.id}>{item.id}</div>}
       />,

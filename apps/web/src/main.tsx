@@ -280,21 +280,23 @@ export function CompactMetadataList<T extends DatedRecord>({ items, label, rende
     const timestampOrder = (Number.isNaN(rightTime) ? 0 : rightTime) - (Number.isNaN(leftTime) ? 0 : leftTime);
     return timestampOrder || right.id.localeCompare(left.id);
   }), [items]);
-  const hasMore = sorted.length > 3;
-  const visible = expanded ? sorted : sorted.slice(0, 3);
+  const hasMore = sorted.length > 2;
+  const visible = expanded ? sorted : sorted.slice(0, 2);
   return (
     <div className="metadataList">
       {visible.map(renderItem)}
       {hasMore && (
-        <button
-          type="button"
-          className="metadataDisclosure"
-          aria-expanded={expanded}
-          aria-label={expanded ? `Show fewer ${label}` : `Show all ${sorted.length} ${label}`}
-          onClick={() => setExpanded((value) => !value)}
-        >
-          <span aria-hidden="true">{expanded ? "⌃" : "…  ⌄"}</span>
-        </button>
+        <div className="metadataDisclosure">
+          <span>{expanded ? `All ${sorted.length} shown` : `…and ${sorted.length - 2} more`}</span>
+          <button
+            type="button"
+            aria-expanded={expanded}
+            aria-label={expanded ? `Show fewer ${label}` : `Show all ${sorted.length} ${label}`}
+            onClick={() => setExpanded((value) => !value)}
+          >
+            <span aria-hidden="true">{expanded ? "⌃" : "⌄"}</span>
+          </button>
+        </div>
       )}
     </div>
   );
@@ -1495,7 +1497,7 @@ export function App() {
                         items={environments}
                         label="environment specifications"
                         renderItem={(item) => (
-                          <div className="metadataItem" key={item.id}>
+                          <div className="metadataItem environmentMetadataItem" key={item.id}>
                             <strong>{item.name}</strong>
                             <span className="state compactState">{item.kind}</span>
                             <code>{item.id}</code>

@@ -903,7 +903,7 @@ The initial UI must support:
   Version values while requiring repository-specific stage and output values before copying;
 - an authenticated project-chooser landing state with the advertised service-hosted CLI installation
   command, instance-specific login command, accessible copy controls, and read-only API reference link;
-- newest-first Overview metadata lists that show three records by default and expose an accessible
+- newest-first Overview metadata lists that show two records by default and expose an accessible
   expand/collapse control only when additional records exist;
 - standard `.dvc` pointer download for one exact Artifact Version;
 - publication request and durable progress/status display through the same SSE API as scripts;
