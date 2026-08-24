@@ -34,6 +34,7 @@ class OrganizationPrincipalResponse(BaseModel):
     principal_kind: str
     gitlab_username: str | None
     organization_role: OrganizationRole | None
+    created_at: datetime
     membership_created_at: datetime | None
 
 
@@ -51,6 +52,7 @@ def _response(value: OrganizationPrincipalView) -> OrganizationPrincipalResponse
         principal_kind=value.principal.kind.value,
         gitlab_username=value.gitlab_username,
         organization_role=value.role,
+        created_at=value.principal.created_at,
         membership_created_at=value.membership_created_at,
     )
 

@@ -77,6 +77,11 @@ section { margin-top: 32px; }.sectionTitle { display: flex; align-items: center;
 .artifactMetadataItem { grid-template-columns: minmax(0, .8fr) auto minmax(0, .8fr) minmax(0, 1.8fr); }
 .artifactMetadataItem > strong, .artifactMetadataItem > code, .artifactMetadataItem > small { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .runMetadataItem:first-child, .artifactMetadataItem:first-child, .auditMetadataItem:first-child { padding-top: 8px; }
+.accessMetadataItem { grid-template-columns: minmax(0, 1.2fr) auto minmax(0, 1fr) minmax(0, 1.35fr); }
+.accessMetadataItem > strong, .accessMetadataItem > code { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.accessMetadataItem:first-child { padding-top: 8px; }
+.accessMetadataActions { min-width: 0; display: flex; align-items: center; justify-content: flex-end; gap: 6px 12px; flex-wrap: wrap; }
+.accessMetadataActions small { text-align: right; }
 .compactListSurface + .inspector, .compactDetailHint { margin-top: 10px; }
 .compactListSurface + .versions { margin-top: 10px; }
 .environmentMetadataItem { display: grid; grid-template-columns: minmax(0, .7fr) 62px minmax(0, 1fr) minmax(0, 1.25fr); align-items: center; }
@@ -100,6 +105,7 @@ section { margin-top: 32px; }.sectionTitle { display: flex; align-items: center;
 @media (max-width: 1100px) { .repositoryItem { grid-template-columns: minmax(0, 1fr) auto; } .repositoryLocation { grid-column: 1 / -1; grid-row: 2; } .repositoryActions { grid-column: 2; grid-row: 1; } }
 @media (max-width: 1100px) { .overviewInfoGroup { grid-template-columns: 1fr; gap: 9px; } .overviewInfoGroup .sectionTitle { padding-top: 0; } }
 @media (max-width: 760px) { .shell { display: block; } aside { position: static; border-right: 0; border-bottom: 1px solid #263d35; }.brand { margin-bottom: 18px; }.docs { margin-top: 16px; }.logout { margin-top: 0; }.workspace { padding-top: 14px; }.artifactLayout, .split, .columns { grid-template-columns: 1fr; } .stackForm { grid-template-columns: 1fr; } .inlineForm { flex-direction: column; } header { align-items: start; flex-direction: column; gap: 12px; } .metadataItem { align-items: flex-start; } .environmentMetadataItem, .catalogMetadataItem { grid-template-columns: minmax(0, 1fr) auto; } .environmentMetadataItem code, .environmentMetadataItem small, .catalogMetadataItem code, .catalogMetadataItem small { grid-column: 1 / -1; text-align: left; } .repositoryItem { grid-template-columns: 1fr; } .repositoryLocation, .repositoryActions { grid-column: 1; grid-row: auto; } .repositoryActions { justify-content: flex-start; } }
+@media (max-width: 760px) { .accessMetadataActions { grid-column: 1 / -1; justify-content: flex-start; } .accessMetadataActions small { text-align: left; } }
 
 .srOnly { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 .headerActions { min-width: min(100%, 420px); display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }

@@ -106,6 +106,23 @@ def test_uv_is_a_first_class_environment_kind() -> None:
     ]
 
 
+def test_access_list_contracts_include_creation_timestamps() -> None:
+    schemas = load_openapi()["components"]["schemas"]
+    organization_principal = schemas["OrganizationPrincipalResponse"]
+    machine_credential = schemas["MachineCredentialSummary"]
+
+    assert "created_at" in organization_principal["required"]
+    assert organization_principal["properties"]["created_at"] == {
+        "type": "string",
+        "format": "date-time",
+    }
+    assert "created_at" in machine_credential["required"]
+    assert machine_credential["properties"]["created_at"] == {
+        "type": "string",
+        "format": "date-time",
+    }
+
+
 def test_swagger_ui_is_read_only() -> None:
     response = TestClient(create_app()).get("/docs")
 

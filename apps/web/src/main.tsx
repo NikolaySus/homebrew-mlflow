@@ -122,6 +122,7 @@ type Membership = {
   principal_kind: string;
   gitlab_username: string | null;
   role: string;
+  created_at: string;
 };
 type OrganizationPrincipal = {
   principal_id: string;
@@ -129,6 +130,8 @@ type OrganizationPrincipal = {
   principal_kind: string;
   gitlab_username: string | null;
   organization_role: string | null;
+  created_at: string;
+  membership_created_at: string | null;
 };
 type SecretContext = {
   infisical_project_id: string;
@@ -185,6 +188,7 @@ type MachineCredential = {
   project_id: string;
   scopes: string[];
   revoked: boolean;
+  created_at: string;
   expires_at: string;
 };
 type RetentionDependencies = {
@@ -272,11 +276,12 @@ export function ProjectChooser({ hasProjects, installCommand, installAvailable }
   );
 }
 
-type DatedRecord = { id: string; created_at: string };
+type DatedRecord = { created_at: string };
 
-export function CompactMetadataList<T extends DatedRecord>({ items, label, renderItem }: {
+export function CompactMetadataList<T extends DatedRecord>({ items, label, getItemId, renderItem }: {
   items: T[];
   label: string;
+  getItemId: (item: T) => string;
   renderItem: (item: T) => React.ReactNode;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -284,8 +289,8 @@ export function CompactMetadataList<T extends DatedRecord>({ items, label, rende
     const leftTime = Date.parse(left.created_at);
     const rightTime = Date.parse(right.created_at);
     const timestampOrder = (Number.isNaN(rightTime) ? 0 : rightTime) - (Number.isNaN(leftTime) ? 0 : leftTime);
-    return timestampOrder || right.id.localeCompare(left.id);
-  }), [items]);
+    return timestampOrder || getItemId(right).localeCompare(getItemId(left));
+  }), [getItemId, items]);
   const hasMore = sorted.length > 2;
   const visible = expanded ? sorted : sorted.slice(0, 2);
   return (
@@ -1534,6 +1539,7 @@ export function App() {
                         key={`${projectId}-experiments`}
                         items={experiments}
                         label="experiments"
+                        getItemId={(experiment) => experiment.id}
                         renderItem={(experiment) => (
                           <div className="metadataItem" key={experiment.id}>
                             <strong>{experiment.name}</strong>
@@ -1567,6 +1573,7 @@ export function App() {
                         key={`${projectId}-pipeline-definitions`}
                         items={pipelines}
                         label="pipeline definitions"
+                        getItemId={(pipeline) => pipeline.id}
                         renderItem={(pipeline) => (
                           <button
                             className="metadataItem metadataButton"
@@ -1612,6 +1619,7 @@ export function App() {
                         key={`${projectId}-environment-specifications`}
                         items={environments}
                         label="environment specifications"
+                        getItemId={(item) => item.id}
                         renderItem={(item) => (
                           <div className="metadataItem environmentMetadataItem" key={item.id}>
                             <strong>{item.name}</strong>
@@ -1667,6 +1675,7 @@ export function App() {
                       key={`${projectId}-runs`}
                       items={runs}
                       label="runs"
+                      getItemId={(run) => run.id}
                       renderItem={(run) => (
                         <button
                           key={run.id}
@@ -1733,6 +1742,7 @@ export function App() {
                       key={`${projectId}-artifacts-${artifactKind}`}
                       items={artifacts.filter((artifact) => artifactKind === "all" || artifact.kind === artifactKind)}
                       label="artifacts"
+                      getItemId={(artifact) => artifact.id}
                       renderItem={(artifact) => {
                         const summary = `${new Date(artifact.created_at).toLocaleString()}${artifact.description ? ` · ${artifact.description}` : ""}`;
                         return (
@@ -1870,32 +1880,39 @@ export function App() {
                     title="Project membership"
                     count={memberships.length}
                   />
-                  <div className="table">
-                    {memberships.map((member) => (
-                      <div key={member.principal_id}>
-                        <span>
-                          <strong>{member.display_name}</strong>
-                          <small>
+                  <div className="compactListSurface">
+                    <CompactMetadataList
+                      key={`${projectId}-memberships`}
+                      items={memberships}
+                      label="project memberships"
+                      getItemId={(member) => member.principal_id}
+                      renderItem={(member) => (
+                        <div
+                          className="metadataItem catalogMetadataItem accessMetadataItem"
+                          key={member.principal_id}
+                        >
+                          <strong title={member.display_name}>{member.display_name}</strong>
+                          <span className="state compactState">{member.role}</span>
+                          <code title={member.gitlab_username ?? member.principal_kind}>
                             {member.gitlab_username ?? member.principal_kind}
-                          </small>
-                        </span>
-                        <span>
-                          <code>{member.role}</code>
-                          <button
-                            className="linkButton"
-                            onClick={() => recoverMaintainer(member.principal_id)}
-                          >
-                            recover Maintainer
-                          </button>
-                          <button
-                            className="linkButton"
-                            onClick={() => removeMembership(member.principal_id)}
-                          >
-                            remove
-                          </button>
-                        </span>
-                      </div>
-                    ))}
+                          </code>
+                          <span className="accessMetadataActions">
+                            <button
+                              className="linkButton"
+                              onClick={() => recoverMaintainer(member.principal_id)}
+                            >
+                              recover Maintainer
+                            </button>
+                            <button
+                              className="linkButton"
+                              onClick={() => removeMembership(member.principal_id)}
+                            >
+                              remove
+                            </button>
+                          </span>
+                        </div>
+                      )}
+                    />
                   </div>
                   <form className="inlineForm" onSubmit={setMembership}>
                     <select name="principal" required>
@@ -1919,21 +1936,28 @@ export function App() {
                       title="Organization directory"
                       count={organizationPrincipals.length}
                     />
-                    <div className="table">
-                      {organizationPrincipals.map((principal) => (
-                        <div key={principal.principal_id}>
-                          <span>
-                            <strong>{principal.display_name}</strong>
-                            <small>
-                              {principal.gitlab_username ??
-                                principal.principal_kind}
-                            </small>
-                          </span>
-                          <code>
-                            {principal.organization_role ?? "not enrolled"}
-                          </code>
-                        </div>
-                      ))}
+                    <div className="compactListSurface">
+                      <CompactMetadataList
+                        key={`${projectId}-organization-directory`}
+                        items={organizationPrincipals}
+                        label="organization principals"
+                        getItemId={(principal) => principal.principal_id}
+                        renderItem={(principal) => (
+                          <div
+                            className="metadataItem catalogMetadataItem accessMetadataItem"
+                            key={principal.principal_id}
+                          >
+                            <strong title={principal.display_name}>{principal.display_name}</strong>
+                            <span className="state compactState">
+                              {principal.organization_role ?? "not enrolled"}
+                            </span>
+                            <code title={principal.gitlab_username ?? principal.principal_kind}>
+                              {principal.gitlab_username ?? principal.principal_kind}
+                            </code>
+                            <small>{new Date(principal.created_at).toLocaleString()}</small>
+                          </div>
+                        )}
+                      />
                     </div>
                     <form
                       className="inlineForm"
@@ -1972,27 +1996,45 @@ export function App() {
                       />
                     </div>
                   )}
-                  <div className="table">
-                    {machines.map((machine) => (
-                      <div key={machine.credential_id}>
-                        <span>
-                          <strong>{machine.principal_id}</strong>
-                            <small>
-                              {machine.scopes.join(", ")} · expires {new Date(machine.expires_at).toLocaleDateString()}
-                            </small>
-                        </span>
-                        {machine.revoked ? (
-                          <code>revoked</code>
-                        ) : (
-                          <button
-                            className="linkButton"
-                            onClick={() => revokeMachine(machine.credential_id)}
+                  <div className="compactListSurface">
+                    <CompactMetadataList
+                      key={`${projectId}-machine-principals`}
+                      items={machines}
+                      label="machine principals"
+                      getItemId={(machine) => machine.credential_id}
+                      renderItem={(machine) => {
+                        const displayName = memberships.find(
+                          (member) => member.principal_id === machine.principal_id,
+                        )?.display_name ?? machine.principal_id;
+                        return (
+                          <div
+                            className="metadataItem catalogMetadataItem accessMetadataItem"
+                            key={machine.credential_id}
                           >
-                            revoke
-                          </button>
-                        )}
-                      </div>
-                    ))}
+                            <strong title={machine.principal_id}>{displayName}</strong>
+                            <span className={`state compactState${machine.revoked ? " failed" : ""}`}>
+                              {machine.revoked ? "revoked" : "active"}
+                            </span>
+                            <code title={machine.scopes.join(", ")}>
+                              {machine.scopes.join(", ")}
+                            </code>
+                            <span className="accessMetadataActions">
+                              <small>
+                                expires {new Date(machine.expires_at).toLocaleDateString()}
+                              </small>
+                              {!machine.revoked && (
+                                <button
+                                  className="linkButton"
+                                  onClick={() => revokeMachine(machine.credential_id)}
+                                >
+                                  revoke
+                                </button>
+                              )}
+                            </span>
+                          </div>
+                        );
+                      }}
+                    />
                   </div>
                   <form className="inlineForm" onSubmit={createMachine}>
                     <input name="name" placeholder="Automation name" required />

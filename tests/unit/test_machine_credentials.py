@@ -47,7 +47,14 @@ class Store:
         expires_at: datetime,
     ) -> None:
         self.record = StoredMachineCredential(
-            credential_id, principal.id, self.project, digest, scopes, expires_at, False
+            credential_id,
+            principal.id,
+            self.project,
+            digest,
+            scopes,
+            _created_at,
+            expires_at,
+            False,
         )
 
     def machine_credential(self, _credential_id: PublicId) -> StoredMachineCredential | None:
@@ -66,6 +73,7 @@ class Store:
                 self.record.project_id,
                 self.record.digest,
                 self.record.scopes,
+                self.record.created_at,
                 self.record.expires_at,
                 True,
             )
@@ -93,6 +101,8 @@ def test_machine_credential_is_one_project_role_intersected_with_scopes() -> Non
     )
     authenticated = service.authenticate(created.id, created.secret)
 
+    assert store.record is not None
+    assert store.record.created_at == NOW
     assert authenticated.project_id == project
     assert authenticated.scopes == frozenset({MachineScope.READ, MachineScope.PUBLISH})
     assert authenticated.expires_at == NOW + timedelta(days=90)

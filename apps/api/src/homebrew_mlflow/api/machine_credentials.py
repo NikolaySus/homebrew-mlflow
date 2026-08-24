@@ -48,6 +48,7 @@ class MachineCredentialSummary(BaseModel):
     project_id: str
     scopes: list[str]
     revoked: bool
+    created_at: datetime
     expires_at: datetime
 
 
@@ -116,6 +117,7 @@ def list_machine_credentials(
             project_id=str(record.project_id),
             scopes=sorted(scope.value for scope in record.scopes),
             revoked=record.revoked,
+            created_at=record.created_at,
             expires_at=record.expires_at,
         )
         for record in records
@@ -151,6 +153,7 @@ def revoke_machine_credential(
         project_id=str(record.project_id),
         scopes=sorted(scope.value for scope in record.scopes),
         revoked=record.revoked,
+        created_at=record.created_at,
         expires_at=record.expires_at,
     )
 

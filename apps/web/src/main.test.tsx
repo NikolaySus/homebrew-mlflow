@@ -256,6 +256,7 @@ describe("compact Overview metadata", () => {
       <CompactMetadataList
         items={records}
         label="records"
+        getItemId={(item) => item.id}
         renderItem={(item) => <div key={item.id} data-testid="metadata-record">{item.id}</div>}
       />,
     );
@@ -290,11 +291,32 @@ describe("compact Overview metadata", () => {
       <CompactMetadataList
         items={records.slice(0, 2)}
         label="records"
+        getItemId={(item) => item.id}
         renderItem={(item) => <div key={item.id}>{item.id}</div>}
       />,
     );
 
     expect(screen.queryByRole("button", { name: /records/ })).toBeNull();
+  });
+
+  it("sorts records whose stable identity is supplied by an accessor", () => {
+    const principals = [
+      { principal_id: "principal-a", created_at: "2026-08-22T10:00:00Z" },
+      { principal_id: "principal-c", created_at: "2026-08-24T10:00:00Z" },
+      { principal_id: "principal-b", created_at: "2026-08-23T10:00:00Z" },
+    ];
+    render(
+      <CompactMetadataList
+        items={principals}
+        label="principals"
+        getItemId={(item) => item.principal_id}
+        renderItem={(item) => <div key={item.principal_id}>{item.principal_id}</div>}
+      />,
+    );
+
+    expect(screen.getByText("principal-c")).not.toBeNull();
+    expect(screen.getByText("principal-b")).not.toBeNull();
+    expect(screen.queryByText("principal-a")).toBeNull();
   });
 });
 

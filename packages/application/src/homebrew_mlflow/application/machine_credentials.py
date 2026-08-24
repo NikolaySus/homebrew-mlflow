@@ -29,6 +29,7 @@ class StoredMachineCredential:
     project_id: PublicId
     digest: str
     scopes: frozenset[MachineScope]
+    created_at: datetime
     expires_at: datetime
     revoked: bool
 
@@ -163,6 +164,7 @@ class MachineCredentialService:
             record.project_id,
             record.digest,
             record.scopes,
+            record.created_at,
             record.expires_at,
             True,
         )

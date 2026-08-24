@@ -992,8 +992,8 @@
       },
       "MachineCredentialSummary": {
         "type": "object", "additionalProperties": false,
-        "required": ["credential_id", "principal_id", "project_id", "scopes", "revoked", "expires_at"],
-        "properties": {"credential_id": {"type": "string"}, "principal_id": {"type": "string"}, "project_id": {"type": "string"}, "scopes": {"type": "array", "items": {"type": "string"}}, "revoked": {"type": "boolean"}, "expires_at": {"type": "string", "format": "date-time"}}
+        "required": ["credential_id", "principal_id", "project_id", "scopes", "revoked", "created_at", "expires_at"],
+        "properties": {"credential_id": {"type": "string"}, "principal_id": {"type": "string"}, "project_id": {"type": "string"}, "scopes": {"type": "array", "items": {"type": "string"}}, "revoked": {"type": "boolean"}, "created_at": {"type": "string", "format": "date-time"}, "expires_at": {"type": "string", "format": "date-time"}}
       },
       "MachineLoginRequest": {
         "type": "object", "additionalProperties": false, "required": ["credential_id", "secret"],
@@ -1295,12 +1295,13 @@
       },
       "OrganizationPrincipalResponse": {
         "type": "object", "additionalProperties": false,
-        "required": ["principal_id", "display_name", "principal_kind", "gitlab_username", "organization_role", "membership_created_at"],
+        "required": ["principal_id", "display_name", "principal_kind", "gitlab_username", "organization_role", "created_at", "membership_created_at"],
         "properties": {
           "principal_id": {"type": "string"}, "display_name": {"type": "string"},
           "principal_kind": {"type": "string", "enum": ["human", "machine"]},
           "gitlab_username": {"type": ["string", "null"]},
           "organization_role": {"type": ["string", "null"], "enum": ["member", "admin", null]},
+          "created_at": {"type": "string", "format": "date-time"},
           "membership_created_at": {"type": ["string", "null"], "format": "date-time"}
         }
       },

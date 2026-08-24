@@ -3598,6 +3598,7 @@ class SqlAlchemyMachineCredentialStore(SqlAlchemyRepositoryUnitOfWork):
             PublicId(ResourceKind.PROJECT, project_id),
             row.digest,
             frozenset(MachineScope(value) for value in row.scopes),
+            _utc(row.created_at),
             _utc(row.expires_at),
             row.revoked_at is not None,
         )
@@ -3628,6 +3629,7 @@ class SqlAlchemyMachineCredentialStore(SqlAlchemyRepositoryUnitOfWork):
                 project_id,
                 row.digest,
                 frozenset(MachineScope(scope) for scope in row.scopes),
+                _utc(row.created_at),
                 _utc(row.expires_at),
                 row.revoked_at is not None,
             )
