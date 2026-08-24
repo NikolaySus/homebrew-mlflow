@@ -893,6 +893,8 @@ The initial UI must support:
 - project selection and project membership administration according to role;
 - repository listing and links to GitLab;
 - Experiment and Run creation/browsing/comparison;
+- active Experiment browsing exposes Run counts and filtered Run navigation; active views omit
+  archived Experiments and their Runs without changing their canonical records or provenance;
 - metric history visualization and Run provenance;
 - Artifact family/version browsing, integrity/availability state, size, file count, and file index;
 - Artifact classification plus audited mutable aliases that always resolve to exact immutable versions;

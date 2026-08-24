@@ -14,6 +14,7 @@ import {
 afterEach(() => {
   cleanup();
   window.localStorage.clear();
+  window.history.replaceState(null, "", "/");
   vi.unstubAllGlobals();
 });
 
@@ -246,6 +247,115 @@ describe("project chooser onboarding", () => {
 
     expect((screen.getByRole("button", { name: /^Copy/ }) as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByText(/Recommended release metadata is unavailable/)).not.toBeNull();
+  });
+});
+
+describe("Experiment Run navigation", () => {
+  it("opens filtered active Runs and excludes Runs from archived Experiments", async () => {
+    window.history.replaceState(null, "", "/?project=project_1");
+    const experiments = [
+      {
+        id: "experiment_training",
+        project_id: "project_1",
+        name: "Training",
+        created_at: "2026-08-22T10:00:00Z",
+        archived_at: null,
+      },
+      {
+        id: "experiment_evaluation",
+        project_id: "project_1",
+        name: "Evaluation",
+        created_at: "2026-08-23T10:00:00Z",
+        archived_at: null,
+      },
+    ];
+    const run = (id: string, experimentId: string, createdAt: string) => ({
+      id,
+      project_id: "project_1",
+      experiment_id: experimentId,
+      repository_id: "repository_1",
+      pipeline_version_id: null,
+      environment_specification_id: null,
+      state: "succeeded",
+      command: ["python", "train.py"],
+      created_at: createdAt,
+      heartbeat_at: createdAt,
+      ended_at: createdAt,
+      exit_code: 0,
+      provenance_status: "complete",
+      dvc_experiment_revision: null,
+      logging_token: null,
+    });
+    const runs = [
+      run("run_training", "experiment_training", "2026-08-24T10:00:00Z"),
+      run("run_evaluation_2", "experiment_evaluation", "2026-08-23T10:00:00Z"),
+      run("run_evaluation_1", "experiment_evaluation", "2026-08-22T10:00:00Z"),
+      run("run_archived", "experiment_archived", "2026-08-25T10:00:00Z"),
+    ];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/api/v1/auth/web/session")) return json({ access_token: "access" });
+        if (url.endsWith("/api/v1/client-releases/recommended")) return json({}, 404);
+        if (url.endsWith("/api/v1/setup/status")) return json({ claimed: true });
+        if (url.endsWith("/api/v1/me"))
+          return json({
+            principal_id: "principal_1",
+            display_name: "Ada",
+            organizations: [{ resource_id: "org_1", role: "admin" }],
+          });
+        if (url.endsWith("/api/v1/organization"))
+          return json({ id: "org_1", name: "Research" });
+        if (url.endsWith("/api/v1/projects"))
+          return json([
+            {
+              id: "project_1",
+              organization_id: "org_1",
+              name: "Search",
+              slug: "search",
+              state: "active",
+              archived_at: null,
+            },
+          ]);
+        if (url.endsWith("/experiments")) return json(experiments);
+        if (url.endsWith("/runs")) return json(runs);
+        if (url.includes("/audit-events/page"))
+          return json({ items: [], total_count: 0, next_before_sequence: null });
+        if (url.includes("/secret-context")) return json({}, 404);
+        if (
+          url.includes("/repositories") ||
+          url.includes("/artifacts") ||
+          url.includes("/memberships") ||
+          url.includes("/principals") ||
+          url.includes("/pipeline-definitions") ||
+          url.includes("/environment-specifications") ||
+          url.includes("/machine-credentials") ||
+          url.includes("/shared-artifact-references")
+        )
+          return json([]);
+        throw new Error(`unexpected request ${url}`);
+      }),
+    );
+
+    render(<App />);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: /Evaluation.*2 Runs/ }));
+
+    expect(screen.getByRole("status").textContent).toContain("Evaluation");
+    expect(screen.getByText("run_evaluation_2")).not.toBeNull();
+    expect(screen.getByText("run_evaluation_1")).not.toBeNull();
+    expect(screen.queryByText("run_training")).toBeNull();
+    expect(screen.queryByText("run_archived")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Clear Experiment filter Evaluation" }));
+    expect(await screen.findByText("run_training")).not.toBeNull();
+    expect(screen.queryByText("run_archived")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Filter Runs by Experiment Training" }));
+    expect(screen.getByRole("status").textContent).toContain("Training");
+    expect(screen.getByText("run_training")).not.toBeNull();
+    expect(screen.queryByText("run_evaluation_2")).toBeNull();
   });
 });
 

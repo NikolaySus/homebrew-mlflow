@@ -230,6 +230,17 @@ export function suggestSlug(name: string) {
     .replace(/^-|-$/g, "");
 }
 
+export function activeRunsForExperiments(runs: Run[], experiments: Experiment[]) {
+  const activeExperimentIds = new Set(experiments.map((experiment) => experiment.id));
+  return runs.filter((run) => activeExperimentIds.has(run.experiment_id));
+}
+
+export function runCountsByExperiment(runs: Run[]) {
+  const counts = new Map<string, number>();
+  for (const run of runs) counts.set(run.experiment_id, (counts.get(run.experiment_id) ?? 0) + 1);
+  return counts;
+}
+
 export function ProjectChooser({ hasProjects, installCommand, installAvailable }: {
   hasProjects: boolean;
   installCommand: string;
@@ -421,6 +432,7 @@ export function App() {
   const [repositories, setRepositories] = useState<Repository[]>([]);
   const [experiments, setExperiments] = useState<Experiment[]>([]);
   const [runs, setRuns] = useState<Run[]>([]);
+  const [experimentFilterId, setExperimentFilterId] = useState("");
   const [runDetail, setRunDetail] = useState<RunDetail | null>(null);
   const [artifacts, setArtifacts] = useState<Artifact[]>([]);
   const [versions, setVersions] = useState<Version[]>([]);
@@ -565,6 +577,7 @@ export function App() {
   }, [token]);
   useEffect(() => {
     if (!projectId) return;
+    setExperimentFilterId("");
     setRunDetail(null);
     setVersion(null);
     setMachineSecret("");
@@ -687,6 +700,7 @@ export function App() {
     setTab("overview");
     setArtifactId("");
     setVersion(null);
+    setExperimentFilterId("");
     setRunDetail(null);
     setMachineSecret("");
     setError("");
@@ -711,6 +725,33 @@ export function App() {
     () => new Map(experiments.map((item) => [item.id, item.name])),
     [experiments],
   );
+  const activeRuns = useMemo(
+    () => activeRunsForExperiments(runs, experiments),
+    [experiments, runs],
+  );
+  const experimentRunCounts = useMemo(() => runCountsByExperiment(activeRuns), [activeRuns]);
+  const filteredExperiment = experiments.find((item) => item.id === experimentFilterId) ?? null;
+  const filteredRuns = experimentFilterId
+    ? activeRuns.filter((run) => run.experiment_id === experimentFilterId)
+    : activeRuns;
+
+  useEffect(() => {
+    if (experimentFilterId && !experimentNames.has(experimentFilterId)) {
+      setExperimentFilterId("");
+      setRunDetail(null);
+    }
+  }, [experimentFilterId, experimentNames]);
+
+  function filterRunsByExperiment(experimentId: string, openRunsTab = false) {
+    setExperimentFilterId(experimentId);
+    setRunDetail(null);
+    if (openRunsTab) setTab("runs");
+  }
+
+  function clearExperimentFilter() {
+    setExperimentFilterId("");
+    setRunDetail(null);
+  }
 
   useEffect(() => {
     if (!selected || selected.state !== "provisioning") return;
@@ -1417,6 +1458,8 @@ export function App() {
               setProjectId(project.id);
               setArtifactId("");
               setVersion(null);
+              setExperimentFilterId("");
+              setRunDetail(null);
               window.history.replaceState(null, "", `/?project=${encodeURIComponent(project.id)}`);
             }}
           >
@@ -1550,8 +1593,18 @@ export function App() {
                         label="experiments"
                         getItemId={(experiment) => experiment.id}
                         renderItem={(experiment) => (
-                          <div className="metadataItem" key={experiment.id}>
-                            <strong>{experiment.name}</strong>
+                          <div className="metadataItem experimentMetadataItem" key={experiment.id}>
+                            <button
+                              type="button"
+                              className="experimentMetadataLink"
+                              onClick={() => filterRunsByExperiment(experiment.id, true)}
+                            >
+                              <strong>{experiment.name}</strong>
+                              <small>
+                                {experimentRunCounts.get(experiment.id) ?? 0}{" "}
+                                {(experimentRunCounts.get(experiment.id) ?? 0) === 1 ? "Run" : "Runs"}
+                              </small>
+                            </button>
                             <code>{experiment.id}</code>
                             <small>
                               {new Date(experiment.created_at).toLocaleString()}
@@ -1663,16 +1716,28 @@ export function App() {
                 installAvailable={Boolean(clientRelease)}
                 repository={repositories.find((item) => item.state === "active")}
                 artifacts={artifacts}
-                runs={runs}
+                runs={activeRuns}
               />
             )}
             {tab === "runs" && (
               <div className="tabSections">
-                <section>
+                <section className="runsSection">
                   <Title
                     title="Runs"
-                    count={runs.length}
+                    count={filteredRuns.length}
                   />
+                  {filteredExperiment && (
+                    <div className="floatingExperimentFilter" role="status">
+                      <span title={filteredExperiment.name}>{filteredExperiment.name}</span>
+                      <button
+                        type="button"
+                        aria-label={`Clear Experiment filter ${filteredExperiment.name}`}
+                        onClick={clearExperimentFilter}
+                      >
+                        <span aria-hidden="true">×</span>
+                      </button>
+                    </div>
+                  )}
                   <p className="hint">
                     Start a Run from a repository with{" "}
                     <code>homebrew-mlflow run --experiment &lt;name&gt; -- &lt;command&gt;</code>.
@@ -1681,32 +1746,46 @@ export function App() {
                   <RunCommandCard />
                   <div className="compactListSurface">
                     <CompactMetadataList
-                      key={`${projectId}-runs`}
-                      items={runs}
+                      key={`${projectId}-runs-${experimentFilterId || "all"}`}
+                      items={filteredRuns}
                       label="runs"
                       getItemId={(run) => run.id}
                       renderItem={(run) => (
-                        <button
+                        <div
                           key={run.id}
-                          className={`metadataItem metadataButton catalogMetadataItem runMetadataItem${runDetail?.run.id === run.id ? " active" : ""}`}
-                          onClick={() => chooseRun(run)}
+                          className={`metadataItem catalogMetadataItem runMetadataItem${runDetail?.run.id === run.id ? " active" : ""}`}
                         >
-                          <strong>
+                          <button
+                            type="button"
+                            className="runExperimentLink"
+                            aria-label={`Filter Runs by Experiment ${experimentNames.get(run.experiment_id) ?? run.experiment_id}`}
+                            onClick={() => filterRunsByExperiment(run.experiment_id)}
+                          >
                             {experimentNames.get(run.experiment_id) ?? run.experiment_id}
-                          </strong>
+                          </button>
                           <span className={`state compactState ${run.state}`}>{run.state}</span>
                           <code>{run.id}</code>
                           <small>{new Date(run.created_at).toLocaleString()}</small>
-                        </button>
+                          <button
+                            type="button"
+                            className="runMetadataSelection"
+                            aria-label={`Inspect Run ${run.id}`}
+                            onClick={() => chooseRun(run)}
+                          />
+                        </div>
                       )}
                     />
                   </div>
-                  {runs.length === 0 && (
-                    <p className="hint compactHint">Runs appear after the CLI starts local work.</p>
+                  {filteredRuns.length === 0 && (
+                    <p className="hint compactHint">
+                      {filteredExperiment
+                        ? "No active Runs belong to this Experiment."
+                        : "Runs appear after the CLI starts local work."}
+                    </p>
                   )}
                   {runDetail ? (
                     <RunInspector detail={runDetail} />
-                  ) : runs.length > 0 ? (
+                  ) : filteredRuns.length > 0 ? (
                     <p className="muted compactDetailHint">
                       Select a Run to inspect metrics and provenance.
                     </p>
