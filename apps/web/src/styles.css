@@ -73,7 +73,7 @@ section { margin-top: 32px; }.sectionTitle { display: flex; align-items: center;
 .metadataButton:focus-visible { outline: 1px solid #76d4ad; outline-offset: 3px; }
 .metadataButton.active { background: #183127; }
 .experimentMetadataLink, .runExperimentLink { min-width: 0; padding: 0; border: 0; background: transparent; color: #e8f0ec; text-align: left; }
-.experimentMetadataLink { flex: 1 1 170px; display: flex; flex-direction: column; align-items: flex-start; gap: 3px; }
+.experimentMetadataLink { flex: 1 1 204px; display: flex; flex-direction: column; align-items: flex-start; gap: 3px; }
 .experimentMetadataLink strong { flex: none; }
 .experimentMetadataLink:hover strong, .experimentMetadataLink:focus-visible strong, .runExperimentLink:hover, .runExperimentLink:focus-visible { color: #76d4ad; }
 .experimentMetadataLink:focus-visible, .runExperimentLink:focus-visible { outline: 1px solid #76d4ad; outline-offset: 3px; }
