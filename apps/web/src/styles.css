@@ -73,6 +73,10 @@ section { margin-top: 32px; }.sectionTitle { display: flex; align-items: center;
 .catalogMetadataItem { display: grid; grid-template-columns: minmax(0, .8fr) auto minmax(0, 1fr) minmax(0, 1.25fr); align-items: center; width: 100%; }
 .catalogMetadataItem code { min-width: 0; }
 .catalogMetadataItem small { text-align: right; overflow-wrap: anywhere; }
+.runMetadataItem { grid-template-columns: minmax(0, 1.4fr) auto minmax(0, 1fr) minmax(0, 1fr); }
+.artifactMetadataItem { grid-template-columns: minmax(0, .8fr) auto minmax(0, .8fr) minmax(0, 1.8fr); }
+.artifactMetadataItem > strong, .artifactMetadataItem > code, .artifactMetadataItem > small { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.auditMetadataItem:first-child { padding-top: 8px; }
 .compactListSurface + .inspector, .compactDetailHint { margin-top: 10px; }
 .compactListSurface + .versions { margin-top: 10px; }
 .environmentMetadataItem { display: grid; grid-template-columns: minmax(0, .7fr) 62px minmax(0, 1fr) minmax(0, 1.25fr); align-items: center; }

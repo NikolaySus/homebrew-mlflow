@@ -332,7 +332,7 @@ export function CompactAuditList({
   return (
     <div className="metadataList">
       {visible.map((event) => (
-        <div className="metadataItem catalogMetadataItem" key={event.sequence}>
+        <div className="metadataItem catalogMetadataItem auditMetadataItem" key={event.sequence}>
           <strong>{event.action}</strong>
           <span
             className={`state compactState${event.outcome === "success" ? "" : " failed"}`}
@@ -1670,7 +1670,7 @@ export function App() {
                       renderItem={(run) => (
                         <button
                           key={run.id}
-                          className={`metadataItem metadataButton catalogMetadataItem${runDetail?.run.id === run.id ? " active" : ""}`}
+                          className={`metadataItem metadataButton catalogMetadataItem runMetadataItem${runDetail?.run.id === run.id ? " active" : ""}`}
                           onClick={() => chooseRun(run)}
                         >
                           <strong>
@@ -1733,29 +1733,29 @@ export function App() {
                       key={`${projectId}-artifacts-${artifactKind}`}
                       items={artifacts.filter((artifact) => artifactKind === "all" || artifact.kind === artifactKind)}
                       label="artifacts"
-                      renderItem={(artifact) => (
-                        <button
-                          key={artifact.id}
-                          className={`metadataItem metadataButton catalogMetadataItem${artifact.id === artifactId ? " active" : ""}`}
-                          onClick={() => {
-                            setArtifactId(artifact.id);
-                            setVersion(null);
-                            window.history.replaceState(
-                              null,
-                              "",
-                              `/?project=${encodeURIComponent(projectId)}&artifact=${encodeURIComponent(artifact.id)}`,
-                            );
-                          }}
-                        >
-                          <strong>{artifact.name}</strong>
-                          <span className="state compactState">{artifact.kind}</span>
-                          <code>{artifact.id}</code>
-                          <small>
-                            {new Date(artifact.created_at).toLocaleString()}
-                            {artifact.description ? ` · ${artifact.description}` : ""}
-                          </small>
-                        </button>
-                      )}
+                      renderItem={(artifact) => {
+                        const summary = `${new Date(artifact.created_at).toLocaleString()}${artifact.description ? ` · ${artifact.description}` : ""}`;
+                        return (
+                          <button
+                            key={artifact.id}
+                            className={`metadataItem metadataButton catalogMetadataItem artifactMetadataItem${artifact.id === artifactId ? " active" : ""}`}
+                            onClick={() => {
+                              setArtifactId(artifact.id);
+                              setVersion(null);
+                              window.history.replaceState(
+                                null,
+                                "",
+                                `/?project=${encodeURIComponent(projectId)}&artifact=${encodeURIComponent(artifact.id)}`,
+                              );
+                            }}
+                          >
+                            <strong title={artifact.name}>{artifact.name}</strong>
+                            <span className="state compactState">{artifact.kind}</span>
+                            <code title={artifact.id}>{artifact.id}</code>
+                            <small title={summary}>{summary}</small>
+                          </button>
+                        );
+                      }}
                     />
                   </div>
                   {artifacts.filter((artifact) => artifactKind === "all" || artifact.kind === artifactKind).length === 0 && (
