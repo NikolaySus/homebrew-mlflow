@@ -1019,6 +1019,51 @@ class SqlAlchemyAuditUnitOfWork:
             for event, actor_id in rows
         )
 
+    def recent_events(
+        self, project_id: PublicId, *, before_sequence: int | None, limit: int
+    ) -> tuple[AuditEventView, ...]:
+        project_key = self._memberships._projects._project_key(project_id)
+        if project_key is None:
+            return ()
+        statement = (
+            select(AuditEventRow, PrincipalRow.public_id)
+            .outerjoin(PrincipalRow, PrincipalRow.id == AuditEventRow.actor_principal_id)
+            .where(AuditEventRow.project_id == project_key)
+        )
+        if before_sequence is not None:
+            statement = statement.where(AuditEventRow.sequence < before_sequence)
+        rows = self._session.execute(
+            statement.order_by(AuditEventRow.sequence.desc()).limit(limit)
+        )
+        return tuple(
+            AuditEventView(
+                event.sequence,
+                event.occurred_at,
+                PublicId(ResourceKind.PRINCIPAL, actor_id) if actor_id is not None else None,
+                project_id,
+                event.action,
+                event.resource_type,
+                event.resource_id,
+                event.outcome,
+                PublicId(ResourceKind.REQUEST, event.request_id),
+                event.safe_metadata,
+            )
+            for event, actor_id in rows
+        )
+
+    def event_count(self, project_id: PublicId) -> int:
+        project_key = self._memberships._projects._project_key(project_id)
+        if project_key is None:
+            return 0
+        return int(
+            self._session.scalar(
+                select(func.count())
+                .select_from(AuditEventRow)
+                .where(AuditEventRow.project_id == project_key)
+            )
+            or 0
+        )
+
 
 class SqlAlchemyIdentityReadStore:
     def __init__(self, session: Session) -> None:

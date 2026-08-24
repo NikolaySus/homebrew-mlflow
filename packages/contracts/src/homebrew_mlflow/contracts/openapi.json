@@ -373,6 +373,17 @@
         "responses": {"200": {"description": "Ordered safe audit events", "content": {"application/json": {"schema": {"type": "array", "items": {"$ref": "#/components/schemas/AuditEventResponse"}}}}}}
       }
     },
+    "/api/v1/projects/{project_id}/audit-events/page": {
+      "get": {
+        "operationId": "listRecentProjectAuditEvents", "summary": "Page newest-first project-scoped safe audit events", "security": [{"bearerAuth": []}],
+        "parameters": [
+          {"name": "project_id", "in": "path", "required": true, "schema": {"type": "string"}},
+          {"name": "before_sequence", "in": "query", "required": false, "schema": {"type": ["integer", "null"], "minimum": 1, "default": null}},
+          {"name": "limit", "in": "query", "required": false, "schema": {"type": "integer", "minimum": 1, "maximum": 200, "default": 100}}
+        ],
+        "responses": {"200": {"description": "Newest-first audit event page", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/AuditEventPageResponse"}}}}}
+      }
+    },
     "/api/v1/projects/{project_id}/memberships/{principal_id}": {
       "put": {
         "operationId": "setProjectMembership", "summary": "Add or change a canonical project role", "security": [{"bearerAuth": []}],
@@ -1079,13 +1090,14 @@
       },
       "RunResponse": {
         "type": "object", "additionalProperties": false,
-        "required": ["id", "project_id", "experiment_id", "repository_id", "pipeline_version_id", "environment_specification_id", "state", "command", "heartbeat_at", "ended_at", "exit_code", "provenance_status", "dvc_experiment_revision", "logging_token"],
+        "required": ["id", "project_id", "experiment_id", "repository_id", "pipeline_version_id", "environment_specification_id", "state", "command", "created_at", "heartbeat_at", "ended_at", "exit_code", "provenance_status", "dvc_experiment_revision", "logging_token"],
         "properties": {
           "id": {"type": "string", "pattern": "^run_[0-9A-HJKMNP-TV-Z]{26}$"},
           "project_id": {"type": "string"}, "experiment_id": {"type": "string"}, "repository_id": {"type": "string"},
           "pipeline_version_id": {"type": ["string", "null"]},
           "environment_specification_id": {"type": ["string", "null"]},
           "state": {"type": "string"}, "command": {"type": "array", "items": {"type": "string"}},
+          "created_at": {"type": "string", "format": "date-time"},
           "heartbeat_at": {"type": ["string", "null"], "format": "date-time"},
           "ended_at": {"type": ["string", "null"], "format": "date-time"},
           "exit_code": {"type": ["integer", "null"]},
@@ -1174,6 +1186,15 @@
           "action": {"type": "string"}, "resource_type": {"type": "string"},
           "resource_id": {"type": ["string", "null"]}, "outcome": {"type": "string"},
           "request_id": {"type": "string"}, "safe_metadata": {"type": "object"}
+        }
+      },
+      "AuditEventPageResponse": {
+        "type": "object", "additionalProperties": false,
+        "required": ["items", "total_count", "next_before_sequence"],
+        "properties": {
+          "items": {"type": "array", "items": {"$ref": "#/components/schemas/AuditEventResponse"}},
+          "total_count": {"type": "integer", "minimum": 0},
+          "next_before_sequence": {"type": ["integer", "null"], "minimum": 1}
         }
       },
       "ParameterInput": {

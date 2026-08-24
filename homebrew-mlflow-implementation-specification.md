@@ -852,6 +852,8 @@ The exact CRUD shape may evolve without violating domain rules, but v1 needs:
 - `/api/v1/projects/{project_id}/shared-artifact-references`
 - `/api/v1/projects/{project_id}/publication-operations`
 - `/api/v1/publication-operations/{operation_id}` and `/events`
+- `/api/v1/projects/{project_id}/audit-events/page` for newest-first, exclusive-cursor
+  backward pagination without changing the forward audit replay endpoint;
 - `/api/v1/projects/{project_id}/dvc/credentials`
 - `/api/v1/projects/{project_id}/infisical-mapping`
 - `/api/v1/audit-events`
@@ -905,6 +907,10 @@ The initial UI must support:
   command, instance-specific login command, accessible copy controls, and read-only API reference link;
 - newest-first Overview metadata lists that show two records by default and expose an accessible
   expand/collapse control only when additional records exist;
+- newest-first compact Run and Artifact lists that show two records by default, retain status/kind
+  badges, and place the selected record's detail below the full-width list;
+- a newest-first compact Audit trail with outcome badges, an exact count, two records by default,
+  accessible collapse, and explicit cursor-based loading of older history;
 - standard `.dvc` pointer download for one exact Artifact Version;
 - publication request and durable progress/status display through the same SSE API as scripts;
 - non-secret Infisical mapping administration for Maintainers;

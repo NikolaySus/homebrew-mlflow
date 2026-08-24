@@ -14,7 +14,7 @@ from .attachments import (
     AttachmentUnitOfWork,
     UploadAttachment,
 )
-from .audit import AuditEventView, AuditService, AuditUnitOfWork
+from .audit import AuditEventPage, AuditEventView, AuditService, AuditUnitOfWork
 from .dvc_credentials import (
     DvcCredentialAuthorization,
     DvcCredentialIssuer,
@@ -137,6 +137,7 @@ __all__ = [
     "EnvironmentUnitOfWork",
     "ArtifactSharingService",
     "AuditEventView",
+    "AuditEventPage",
     "AuditService",
     "AuditUnitOfWork",
     "UploadAttachment",

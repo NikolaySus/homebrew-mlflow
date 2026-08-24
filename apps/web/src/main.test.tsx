@@ -3,7 +3,13 @@
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { App, CompactMetadataList, ProjectChooser, suggestSlug } from "./main";
+import {
+  App,
+  CompactAuditList,
+  CompactMetadataList,
+  ProjectChooser,
+  suggestSlug,
+} from "./main";
 
 afterEach(() => {
   cleanup();
@@ -148,6 +154,8 @@ describe("project onboarding", () => {
             },
           ]);
         if (url.includes("/secret-context")) return json({}, 404);
+        if (url.includes("/audit-events/page"))
+          return json({ items: [], total_count: 0, next_before_sequence: null });
         if (
           url.includes("/experiments") ||
           url.includes("/runs") ||
@@ -287,5 +295,54 @@ describe("compact Overview metadata", () => {
     );
 
     expect(screen.queryByRole("button", { name: /records/ })).toBeNull();
+  });
+});
+
+describe("compact paged audit metadata", () => {
+  const events = [4, 3, 2, 1].map((sequence) => ({
+    sequence,
+    occurred_at: `2026-08-2${sequence}T10:00:00Z`,
+    actor_principal_id: "principal_1",
+    action: `action-${sequence}`,
+    outcome: sequence === 3 ? "failed" : "succeeded",
+    resource_id: `resource-${sequence}`,
+    safe_metadata: {},
+  }));
+
+  it("shows the latest two, loads older pages, and collapses", async () => {
+    const user = userEvent.setup();
+    const loadOlder = vi.fn();
+    const { rerender } = render(
+      <CompactAuditList
+        items={events.slice(0, 2)}
+        totalCount={4}
+        nextBeforeSequence={3}
+        loading={false}
+        onLoadOlder={loadOlder}
+      />,
+    );
+
+    expect(screen.getByText("action-4")).not.toBeNull();
+    expect(screen.getByText("action-3")).not.toBeNull();
+    expect(screen.queryByText("action-2")).toBeNull();
+    expect(screen.getByText("…and 2 more")).not.toBeNull();
+    await user.click(screen.getByRole("button", { name: "Show audit history (4 events)" }));
+    expect(screen.getByText("2 older not loaded")).not.toBeNull();
+    await user.click(screen.getByRole("button", { name: "Load older audit events" }));
+    expect(loadOlder).toHaveBeenCalledOnce();
+
+    rerender(
+      <CompactAuditList
+        items={events}
+        totalCount={4}
+        nextBeforeSequence={null}
+        loading={false}
+        onLoadOlder={loadOlder}
+      />,
+    );
+    expect(screen.getByText("All 4 shown")).not.toBeNull();
+    expect(screen.getByText("action-1")).not.toBeNull();
+    await user.click(screen.getByRole("button", { name: "Show fewer audit events" }));
+    expect(screen.queryByText("action-2")).toBeNull();
   });
 });

@@ -50,6 +50,7 @@ type Run = {
   pipeline_version_id: string | null;
   environment_specification_id: string | null;
   command: string[];
+  created_at: string;
   ended_at: string | null;
   provenance_status: "pending" | "complete" | "incomplete" | "invalid";
   dvc_experiment_revision: string | null;
@@ -144,6 +145,11 @@ type AuditEvent = {
   outcome: string;
   resource_id: string | null;
   safe_metadata: Record<string, unknown>;
+};
+type AuditEventPage = {
+  items: AuditEvent[];
+  total_count: number;
+  next_before_sequence: number | null;
 };
 type Consumption = { bash_commands: string[]; powershell_commands: string[] };
 type PipelineDefinition = {
@@ -302,6 +308,87 @@ export function CompactMetadataList<T extends DatedRecord>({ items, label, rende
   );
 }
 
+export function CompactAuditList({
+  items,
+  totalCount,
+  nextBeforeSequence,
+  loading,
+  onLoadOlder,
+}: {
+  items: AuditEvent[];
+  totalCount: number;
+  nextBeforeSequence: number | null;
+  loading: boolean;
+  onLoadOlder: () => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const sorted = useMemo(
+    () => [...items].sort((left, right) => right.sequence - left.sequence),
+    [items],
+  );
+  const hasMoreThanPreview = totalCount > 2;
+  const visible = expanded ? sorted : sorted.slice(0, 2);
+  const unloadedCount = Math.max(0, totalCount - sorted.length);
+  return (
+    <div className="metadataList">
+      {visible.map((event) => (
+        <div className="metadataItem catalogMetadataItem" key={event.sequence}>
+          <strong>{event.action}</strong>
+          <span
+            className={`state compactState${event.outcome === "success" ? "" : " failed"}`}
+          >
+            {event.outcome}
+          </span>
+          <code>{event.resource_id ?? "system"}</code>
+          <small>{new Date(event.occurred_at).toLocaleString()}</small>
+        </div>
+      ))}
+      {hasMoreThanPreview && !expanded && (
+        <div className="metadataDisclosure">
+          <span>…and {totalCount - 2} more</span>
+          <button
+            type="button"
+            aria-expanded="false"
+            aria-label={`Show audit history (${totalCount} events)`}
+            onClick={() => setExpanded(true)}
+          >
+            <span aria-hidden="true">⌄</span>
+          </button>
+        </div>
+      )}
+      {expanded && (
+        <div className="metadataDisclosure pagedDisclosure">
+          <span>
+            {nextBeforeSequence === null
+              ? `All ${sorted.length} shown`
+              : `${unloadedCount} older not loaded`}
+          </span>
+          <div className="metadataDisclosureActions">
+            {nextBeforeSequence !== null && (
+              <button
+                type="button"
+                disabled={loading}
+                aria-label="Load older audit events"
+                onClick={onLoadOlder}
+              >
+                {loading ? "…" : "⌄"}
+              </button>
+            )}
+            <button
+              type="button"
+              aria-expanded="true"
+              aria-label="Show fewer audit events"
+              onClick={() => setExpanded(false)}
+            >
+              ⌃
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function App() {
   const initialQuery = useMemo(() => new URLSearchParams(window.location.search), []);
   const [token, setToken] = useState("");
@@ -342,6 +429,9 @@ export function App() {
     null,
   );
   const [audit, setAudit] = useState<AuditEvent[]>([]);
+  const [auditTotal, setAuditTotal] = useState(0);
+  const [auditNextBefore, setAuditNextBefore] = useState<number | null>(null);
+  const [auditLoading, setAuditLoading] = useState(false);
   const [pipelines, setPipelines] = useState<PipelineDefinition[]>([]);
   const [pipelineVersions, setPipelineVersions] = useState<PipelineVersion[]>(
     [],
@@ -465,13 +555,17 @@ export function App() {
     setVersion(null);
     setMachineSecret("");
     setPublicationLog([]);
+    setAudit([]);
+    setAuditTotal(0);
+    setAuditNextBefore(null);
+    setAuditLoading(false);
     Promise.all([
       request<Repository[]>(`/api/v1/projects/${projectId}/repositories`),
       request<Experiment[]>(`/api/v1/projects/${projectId}/experiments`),
       request<Run[]>(`/api/v1/projects/${projectId}/runs`),
       request<Artifact[]>(`/api/v1/projects/${projectId}/artifacts`),
       request<Membership[]>(`/api/v1/projects/${projectId}/memberships`),
-      request<AuditEvent[]>(`/api/v1/projects/${projectId}/audit-events`),
+      request<AuditEventPage>(`/api/v1/projects/${projectId}/audit-events/page`),
       request<SecretContext>(
         `/api/v1/projects/${projectId}/secret-context`,
       ).catch(() => null),
@@ -498,7 +592,7 @@ export function App() {
           runValues,
           artifactValues,
           members,
-          events,
+          auditPage,
           context,
           principals,
           pipelineValues,
@@ -511,7 +605,9 @@ export function App() {
           setRuns(runValues);
           setArtifacts(artifactValues);
           setMemberships(members);
-          setAudit(events);
+          setAudit(auditPage.items);
+          setAuditTotal(auditPage.total_count);
+          setAuditNextBefore(auditPage.next_before_sequence);
           setSecretContext(context);
           setOrganizationPrincipals(principals);
           setPipelines(pipelineValues);
@@ -523,6 +619,27 @@ export function App() {
       )
       .catch(showError);
   }, [projectId, token, projects]);
+
+  async function loadOlderAuditEvents() {
+    if (auditNextBefore === null || auditLoading) return;
+    setAuditLoading(true);
+    try {
+      const page = await request<AuditEventPage>(
+        `/api/v1/projects/${projectId}/audit-events/page?before_sequence=${auditNextBefore}`,
+      );
+      setAudit((current) => {
+        const bySequence = new Map(current.map((event) => [event.sequence, event]));
+        page.items.forEach((event) => bySequence.set(event.sequence, event));
+        return [...bySequence.values()].sort((left, right) => right.sequence - left.sequence);
+      });
+      setAuditTotal(page.total_count);
+      setAuditNextBefore(page.next_before_sequence);
+    } catch (caught) {
+      showError(caught);
+    } finally {
+      setAuditLoading(false);
+    }
+  }
   useEffect(() => {
     if (!artifactId) {
       setVersions([]);
@@ -1545,33 +1662,37 @@ export function App() {
                     The CLI performs runtime capture before it creates the record.
                   </p>
                   <RunCommandCard />
-                  <div className="split">
-                    <div className="runList">
-                      {runs.map((run) => (
+                  <div className="compactListSurface">
+                    <CompactMetadataList
+                      key={`${projectId}-runs`}
+                      items={runs}
+                      label="runs"
+                      renderItem={(run) => (
                         <button
                           key={run.id}
-                          className="artifact"
+                          className={`metadataItem metadataButton catalogMetadataItem${runDetail?.run.id === run.id ? " active" : ""}`}
                           onClick={() => chooseRun(run)}
                         >
                           <strong>
-                            {experimentNames.get(run.experiment_id) ??
-                              run.experiment_id}
+                            {experimentNames.get(run.experiment_id) ?? run.experiment_id}
                           </strong>
-                          <span className={`state ${run.state}`}>
-                            {run.state}
-                          </span>
+                          <span className={`state compactState ${run.state}`}>{run.state}</span>
                           <code>{run.id}</code>
+                          <small>{new Date(run.created_at).toLocaleString()}</small>
                         </button>
-                      ))}
-                    </div>
-                    {runDetail ? (
-                      <RunInspector detail={runDetail} />
-                    ) : (
-                      <p className="muted">
-                        Select a Run to inspect metrics and provenance.
-                      </p>
-                    )}
+                      )}
+                    />
                   </div>
+                  {runs.length === 0 && (
+                    <p className="hint compactHint">Runs appear after the CLI starts local work.</p>
+                  )}
+                  {runDetail ? (
+                    <RunInspector detail={runDetail} />
+                  ) : runs.length > 0 ? (
+                    <p className="muted compactDetailHint">
+                      Select a Run to inspect metrics and provenance.
+                    </p>
+                  ) : null}
                 </section>
               </div>
             )}
@@ -1607,16 +1728,15 @@ export function App() {
                       ))}
                     </select>
                   </label>
-                  <div className="artifactLayout">
-                    <div className="artifactList">
-                      {artifacts.filter((artifact) => artifactKind === "all" || artifact.kind === artifactKind).map((artifact) => (
+                  <div className="compactListSurface">
+                    <CompactMetadataList
+                      key={`${projectId}-artifacts-${artifactKind}`}
+                      items={artifacts.filter((artifact) => artifactKind === "all" || artifact.kind === artifactKind)}
+                      label="artifacts"
+                      renderItem={(artifact) => (
                         <button
                           key={artifact.id}
-                          className={
-                            artifact.id === artifactId
-                              ? "artifact active"
-                              : "artifact"
-                          }
+                          className={`metadataItem metadataButton catalogMetadataItem${artifact.id === artifactId ? " active" : ""}`}
                           onClick={() => {
                             setArtifactId(artifact.id);
                             setVersion(null);
@@ -1628,12 +1748,20 @@ export function App() {
                           }}
                         >
                           <strong>{artifact.name}</strong>
-                          <span className="state">{artifact.kind}</span>
-                          {artifact.description && <small>{artifact.description}</small>}
+                          <span className="state compactState">{artifact.kind}</span>
                           <code>{artifact.id}</code>
+                          <small>
+                            {new Date(artifact.created_at).toLocaleString()}
+                            {artifact.description ? ` · ${artifact.description}` : ""}
+                          </small>
                         </button>
-                      ))}
-                    </div>
+                      )}
+                    />
+                  </div>
+                  {artifacts.filter((artifact) => artifactKind === "all" || artifact.kind === artifactKind).length === 0 && (
+                    <p className="hint compactHint">No artifact families match this kind.</p>
+                  )}
+                  {artifactId && (
                     <div className="versions">
                       {versions.map((value) => (
                         <article
@@ -1656,7 +1784,7 @@ export function App() {
                         </article>
                       ))}
                     </div>
-                  </div>
+                  )}
                   {artifactId && canManageArtifacts && (
                     <div className="artifactControls">
                       <form className="inlineForm" onSubmit={updateArtifactMetadata}>
@@ -1899,21 +2027,20 @@ export function App() {
                   </p>
                 </section>
                 <section>
-                  <Title title="Audit trail" count={audit.length} />
-                  <div className="table audit">
-                    {audit.map((event) => (
-                      <div key={event.sequence}>
-                        <span>
-                          <strong>{event.action}</strong>
-                          <small>
-                            {new Date(event.occurred_at).toLocaleString()} ·{" "}
-                            {event.outcome}
-                          </small>
-                        </span>
-                        <code>{event.resource_id ?? "system"}</code>
-                      </div>
-                    ))}
+                  <Title title="Audit trail" count={auditTotal} />
+                  <div className="compactListSurface">
+                    <CompactAuditList
+                      key={`${projectId}-audit`}
+                      items={audit}
+                      totalCount={auditTotal}
+                      nextBeforeSequence={auditNextBefore}
+                      loading={auditLoading}
+                      onLoadOlder={loadOlderAuditEvents}
+                    />
                   </div>
+                  {auditTotal === 0 && (
+                    <p className="hint compactHint">No audit events are visible for this project.</p>
+                  )}
                 </section>
               </div>
             )}

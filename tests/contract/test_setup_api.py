@@ -94,6 +94,7 @@ def test_authenticated_user_claims_installation_once(monkeypatch) -> None:  # ty
         "homebrew_mlflow.api.publications.create_session", lambda _url: Session(engine)
     )
     monkeypatch.setattr("homebrew_mlflow.api.tracking.create_session", lambda _url: Session(engine))
+    monkeypatch.setattr("homebrew_mlflow.api.audit.create_session", lambda _url: Session(engine))
     monkeypatch.setattr(
         "homebrew_mlflow.api.dvc_credentials.create_session", lambda _url: Session(engine)
     )
@@ -202,6 +203,12 @@ def test_authenticated_user_claims_installation_once(monkeypatch) -> None:  # ty
     )
     assert run.status_code == 200
     assert run.json()["state"] == "running"
+    assert datetime.fromisoformat(run.json()["created_at"]).tzinfo is not None
+    listed_runs = client.get(
+        f"/api/v1/projects/{project.json()['id']}/runs", headers=headers
+    )
+    assert listed_runs.status_code == 200
+    assert listed_runs.json()[0]["created_at"] == run.json()["created_at"]
     exchanged = client.post(
         "/api/v1/auth/exchange",
         headers=headers,
@@ -336,6 +343,31 @@ def test_authenticated_user_claims_installation_once(monkeypatch) -> None:  # ty
                 AuditEventRow.action == "run.reconcile"
             )
         ) == 1
+
+    audit_page = client.get(
+        f"/api/v1/projects/{project.json()['id']}/audit-events/page?limit=2",
+        headers=headers,
+    )
+    assert audit_page.status_code == 200
+    audit_payload = audit_page.json()
+    assert audit_payload["total_count"] >= len(audit_payload["items"])
+    assert len(audit_payload["items"]) == 2
+    assert [event["sequence"] for event in audit_payload["items"]] == sorted(
+        [event["sequence"] for event in audit_payload["items"]], reverse=True
+    )
+    assert audit_payload["next_before_sequence"] == audit_payload["items"][-1][
+        "sequence"
+    ]
+    older_audit_page = client.get(
+        f"/api/v1/projects/{project.json()['id']}/audit-events/page"
+        f"?limit=2&before_sequence={audit_payload['next_before_sequence']}",
+        headers=headers,
+    )
+    assert older_audit_page.status_code == 200
+    assert all(
+        event["sequence"] < audit_payload["next_before_sequence"]
+        for event in older_audit_page.json()["items"]
+    )
 
     repeated = client.post(
         "/api/v1/setup/claim",

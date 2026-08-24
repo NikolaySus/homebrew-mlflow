@@ -73,6 +73,7 @@ class RunResponse(BaseModel):
     environment_specification_id: str | None
     state: str
     command: list[str]
+    created_at: datetime
     heartbeat_at: datetime | None
     ended_at: datetime | None
     exit_code: int | None
@@ -124,6 +125,11 @@ def _response(run: Run, *, logging_token: str | None = None) -> RunResponse:
         ),
         state=run.state.value,
         command=list(run.command),
+        created_at=(
+            run.created_at.astimezone(UTC)
+            if run.created_at.tzinfo is not None
+            else run.created_at.replace(tzinfo=UTC)
+        ),
         heartbeat_at=run.heartbeat_at,
         ended_at=run.ended_at,
         exit_code=run.exit_code,
