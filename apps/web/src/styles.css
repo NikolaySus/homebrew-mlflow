@@ -25,6 +25,9 @@ aside { min-height: 0; padding: 34px 20px; background: #08110ed9; border-right: 
 .homeSetupHeader h3 { margin: 0; font-size: 1.05rem; }
 .resourceLink { flex: 0 0 auto; color: #76d4ad; font-size: .85rem; }
 .homeSetup > .hint { width: 100%; line-height: 1.5; }
+.proxyTroubleshooting { margin-top: 12px; padding: 10px 12px; border: 1px solid #294238; border-radius: 8px; background: #0a1511; color: #91aa9f; }
+.proxyTroubleshooting summary { width: fit-content; color: #d8e6df; cursor: pointer; font-size: .86rem; font-weight: 700; }
+.proxyTroubleshooting p { margin: 9px 0; line-height: 1.5; }
 .machineAccessNote { margin-top: 12px; padding: 12px 14px; border-left: 2px solid #355348; background: #0a1511; color: #91aa9f; }
 .machineAccessNote strong { color: #d8e6df; font-size: .86rem; }
 .machineAccessNote p { margin: 5px 0 0; line-height: 1.5; }

@@ -80,5 +80,5 @@ jobs:
       - run: uv export --package homebrew-mlflow --no-dev --no-emit-workspace --output-file build/cli-requirements.txt
       - run: "python -m pip download --require-hashes --only-binary=:all: --requirement build/cli-requirements.txt --destination-directory build/wheels"
       - run: python scripts/build_package_index.py build/wheels build/packages
-      - run: python -m pip install --no-index --find-links build/wheels homebrew-mlflow==0.2.6
+      - run: python -m pip install --no-index --find-links build/wheels homebrew-mlflow==0.2.10
       - run: homebrew-mlflow version

@@ -214,7 +214,7 @@ describe("project chooser onboarding", () => {
     render(
       <ProjectChooser
         hasProjects
-        installCommand={'uv tool install --force --no-build "homebrew-mlflow==0.2.9"'}
+        installCommand={'uv tool install --force --no-build "homebrew-mlflow==0.2.10"'}
         installAvailable
       />,
     );
@@ -223,6 +223,17 @@ describe("project chooser onboarding", () => {
     expect(command.value).toContain("uv tool install --force --no-build");
     expect(command.value).toContain("homebrew-mlflow version");
     expect(command.value).toContain("homebrew-mlflow login --server 'http://localhost:3000'");
+    expect(command.value).not.toContain("env -u ALL_PROXY");
+    const proxyTroubleshooting = screen.getByText("VPN or proxy error?").parentElement;
+    expect(proxyTroubleshooting).not.toBeNull();
+    expect((proxyTroubleshooting as HTMLDetailsElement).open).toBe(false);
+    const proxyBypass = screen.getByText("Linux proxy bypass").parentElement;
+    expect(proxyBypass?.textContent).toContain("env -u ALL_PROXY -u all_proxy");
+    expect(proxyBypass?.textContent).toContain("-u HTTP_PROXY -u http_proxy");
+    expect(proxyBypass?.textContent).toContain("-u HTTPS_PROXY -u https_proxy");
+    expect(proxyBypass?.textContent).toContain(
+      "homebrew-mlflow login --server 'http://localhost:3000'",
+    );
     const machineAccessNote = screen.getByText("Set up Git access on this client").parentElement;
     expect(machineAccessNote).not.toBeNull();
     expect(screen.getByText(/On every client machine, including your first/)).not.toBeNull();
@@ -245,7 +256,13 @@ describe("project chooser onboarding", () => {
       />,
     );
 
-    expect((screen.getByRole("button", { name: /^Copy/ }) as HTMLButtonElement).disabled).toBe(true);
+    const setupCommand = screen.getByLabelText("Set up this machine command");
+    const setupCard = setupCommand.closest("article");
+    expect(setupCard).not.toBeNull();
+    expect(
+      (within(setupCard as HTMLElement).getByRole("button", { name: /^Copy/ }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
     expect(screen.getByText(/Recommended release metadata is unavailable/)).not.toBeNull();
   });
 });

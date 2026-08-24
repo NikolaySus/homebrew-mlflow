@@ -708,6 +708,8 @@ Already-issued DVC credentials may remain usable for at most 15 minutes after me
 
 The product, service-hosted Python distribution, and executable are all `homebrew-mlflow`. Install as an isolated CLI with `uv tool install`; support `pipx` as fallback. Do not require installation into experiment virtual environments.
 
+All CLI HTTP access must honor valid HTTP/HTTPS proxy environment variables through one shared client boundary. Unsupported or malformed proxy configuration must fail with secret-safe, actionable guidance rather than a traceback; messages identify environment-variable names but never echo proxy URLs or credentials. The CLI must not silently bypass, rewrite, or disable a user's proxy configuration.
+
 Each deployment MUST expose an unauthenticated, read-only Python Simple Repository under `/packages/simple/` and immutable wheel files under `/packages/files/`. It contains the CLI, its locked transitive wheels for every supported Python/OS target, and every platform package pinned by the current research-repository template, including the MLflow integration plugin. Index generation fails if a required first-party distribution is absent. Installers use this service as their default index and MUST NOT fall back to public PyPI. There is no runtime package-upload endpoint.
 
 `GET /api/v1/client-releases/recommended` advertises the exact recommended version, compatible version constraint, Python/platform matrix, index URL, hashes, and pinned `uv`/`pipx` commands. Releases within the active compatibility range plus the preceding rollback release remain available. The CLI remains instance-neutral and records the deployment URL through `login --server`.
@@ -891,6 +893,7 @@ The initial UI must support:
 
 - GitLab-backed sign-in;
 - project selection and project membership administration according to role;
+- machine setup guidance with an optional, explicit Linux proxy-bypass troubleshooting command that is never part of the default login sequence;
 - repository listing and links to GitLab;
 - Experiment and Run creation/browsing/comparison;
 - active Experiment browsing exposes Run counts and filtered Run navigation; active views omit

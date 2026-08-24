@@ -53,6 +53,46 @@ repository_app = typer.Typer(no_args_is_help=True)
 app.add_typer(repository_app, name="repository")
 _HEARTBEAT_INTERVAL_SECONDS = 30
 _ARTIFACT_VERSION_ID = re.compile(r"^av_[0-9A-HJKMNP-TV-Z]{26}$")
+_PROXY_ENVIRONMENT_VARIABLES = (
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "all_proxy",
+)
+
+
+def _http_client(*, timeout: float | httpx.Timeout) -> httpx.Client:
+    configured: list[str] = []
+    unsupported: list[str] = []
+    for name in _PROXY_ENVIRONMENT_VARIABLES:
+        value = os.environ.get(name)
+        if not value:
+            continue
+        configured.append(name)
+        try:
+            scheme = urlsplit(value).scheme.lower()
+        except ValueError:
+            unsupported.append(name)
+            continue
+        if scheme and scheme not in {"http", "https"}:
+            unsupported.append(name)
+    if unsupported:
+        names = ", ".join(unsupported)
+        raise typer.BadParameter(
+            f"unsupported proxy configuration in {names}; only HTTP/HTTPS proxy URLs are "
+            "supported and SOCKS transport is not included. For direct or VPN-routed access, "
+            "temporarily unset HTTP_PROXY, HTTPS_PROXY, and ALL_PROXY for this invocation"
+        )
+    try:
+        return httpx.Client(timeout=timeout)
+    except (ImportError, ValueError) as error:
+        names = ", ".join(configured) if configured else "the process environment"
+        raise typer.BadParameter(
+            f"invalid proxy configuration in {names}; configure an HTTP/HTTPS proxy or temporarily "
+            "unset HTTP_PROXY, HTTPS_PROXY, and ALL_PROXY for this invocation"
+        ) from error
 
 
 def _config_path() -> Path:
@@ -130,7 +170,7 @@ def _recover_finalization(path: Path, *, run_token: str | None = None) -> dict[s
         if delay:
             time.sleep(delay)
         try:
-            with httpx.Client(timeout=15) as client:
+            with _http_client(timeout=15) as client:
                 pipeline = journal.get("pipeline_resolution")
                 platform_headers: dict[str, str] | None = None
                 if (
@@ -204,7 +244,7 @@ def _send_run_heartbeats(
 ) -> None:
     while not stop.wait(_HEARTBEAT_INTERVAL_SECONDS):
         try:
-            with httpx.Client(timeout=15) as heartbeat_client:
+            with _http_client(timeout=15) as heartbeat_client:
                 logging_token = token_path.read_text(encoding="utf-8").strip()
                 if not logging_token:
                     raise RuntimeError("Run logging token file is empty")
@@ -509,7 +549,7 @@ def login(
     local = normalized.startswith("http://localhost:") or normalized.startswith("http://127.0.0.1:")
     if not normalized.startswith("https://") and not local:
         raise typer.BadParameter("the server must use HTTPS outside localhost")
-    with httpx.Client(timeout=15) as client:
+    with _http_client(timeout=15) as client:
         started_response = client.post(f"{normalized}/api/v1/auth/device/start")
         started_response.raise_for_status()
         started = started_response.json()
@@ -570,7 +610,7 @@ def claim_installation(
     if configured is None:
         raise typer.BadParameter("configure a server with login --server first")
     normalized = configured.rstrip("/")
-    with httpx.Client(timeout=15) as client:
+    with _http_client(timeout=15) as client:
         session = _refresh_session(client, normalized)
         response = client.post(
             f"{normalized}/api/v1/setup/claim",
@@ -606,7 +646,7 @@ def project_create(
             "slug must contain lowercase ASCII letters, digits, and single hyphens"
         )
     normalized = _project_server(server)
-    with httpx.Client(timeout=15) as client:
+    with _http_client(timeout=15) as client:
         session = _refresh_session(client, normalized)
         headers = _project_headers(session)
         organization_response = client.get(
@@ -659,7 +699,7 @@ def project_list(
 ) -> None:
     """List research projects visible to the current principal."""
     normalized = _project_server(server)
-    with httpx.Client(timeout=15) as client:
+    with _http_client(timeout=15) as client:
         headers = _project_headers(_refresh_session(client, normalized))
         response = client.get(f"{normalized}/api/v1/projects", headers=headers)
         response.raise_for_status()
@@ -681,7 +721,7 @@ def project_status(
 ) -> None:
     """Show project and repository provisioning status."""
     normalized = _project_server(server)
-    with httpx.Client(timeout=15) as client:
+    with _http_client(timeout=15) as client:
         headers = _project_headers(_refresh_session(client, normalized))
         selected = _resolve_project(client, normalized, headers, project)
         repositories = _project_repositories(
@@ -706,7 +746,7 @@ def project_retry(
 ) -> None:
     """Retry the failed default-repository provisioning operation."""
     normalized = _project_server(server)
-    with httpx.Client(timeout=15) as client:
+    with _http_client(timeout=15) as client:
         headers = _project_headers(_refresh_session(client, normalized))
         selected = _resolve_project(client, normalized, headers, project)
         project_id = str(selected["id"])
@@ -740,7 +780,7 @@ def repository_configure() -> None:
     template_upgrade = prepare_repository_template_upgrade(root)
     repository = _repository_context(root)
     server = repository["server"].rstrip("/")
-    with httpx.Client(timeout=15) as client:
+    with _http_client(timeout=15) as client:
         session = _refresh_session(client, server)
         response = client.get(
             f"{server}/api/v1/projects/{repository['project_id']}/dvc-configuration",
@@ -948,7 +988,7 @@ def _capture_dvc_tracking(
         experiment.get("params"), metrics=False
     )
     headers = {"Authorization": f"Bearer {run_token}"}
-    with httpx.Client(timeout=30) as client:
+    with _http_client(timeout=30) as client:
         current_response = client.get(
             f"{server}/api/v1/runs/{run_id}/tracking", headers=headers
         )
@@ -1011,7 +1051,7 @@ def _doctor_infisical(
         report("infisical", False, "version check failed")
         return
     try:
-        with httpx.Client(timeout=15) as client:
+        with _http_client(timeout=15) as client:
             response = client.get(
                 f"{server}/api/v1/projects/{project_id}/secret-context", headers=headers
             )
@@ -1063,7 +1103,7 @@ def doctor(
         if not ok:
             failures.append(name)
 
-    with httpx.Client(timeout=10) as client:
+    with _http_client(timeout=10) as client:
         session = _refresh_session(client, normalized)
         headers = _project_headers(session)
         release_response = client.get(
@@ -1093,7 +1133,7 @@ def doctor(
         typer.echo("readiness=failed")
         raise typer.Exit(2) from error
 
-    with httpx.Client(timeout=10) as client:
+    with _http_client(timeout=10) as client:
         repositories = _project_repositories(
             client, normalized, headers, repository["project_id"]
         )
@@ -1216,7 +1256,7 @@ def logout(
         raise typer.BadParameter("no configured server")
     token = keyring.get_password("homebrew-mlflow", configured)
     if token is not None:
-        with httpx.Client(timeout=15) as client:
+        with _http_client(timeout=15) as client:
             normalized = configured.rstrip("/")
             if all_sessions:
                 session = _refresh_session(client, normalized)
@@ -1250,7 +1290,7 @@ def dvc_credentials(
     normalized = configured.rstrip("/")
     issued: httpx.Response | None = None
     try:
-        with httpx.Client(timeout=httpx.Timeout(15, connect=5)) as client:
+        with _http_client(timeout=httpx.Timeout(15, connect=5)) as client:
             for delay in (0.25, 1.0, None):
                 try:
                     session = _refresh_session(client, normalized)
@@ -1324,7 +1364,7 @@ def artifact_pointer(
         except RuntimeError as error:
             raise typer.BadParameter("configure a server with login first") from error
     normalized = configured.rstrip("/")
-    with httpx.Client(timeout=30) as client:
+    with _http_client(timeout=30) as client:
         session = _refresh_session(client, normalized)
         response = client.get(
             f"{normalized}/api/v1/artifact-versions/{version}/pointer",
@@ -1348,7 +1388,7 @@ def artifact_create(
     """Create an explicit, reusable artifact family in the current project."""
     repository = _repository_context()
     server = repository["server"].rstrip("/")
-    with httpx.Client(timeout=15) as client:
+    with _http_client(timeout=15) as client:
         headers = _project_headers(_refresh_session(client, server))
         response = client.post(
             f"{server}/api/v1/projects/{repository['project_id']}/artifacts",
@@ -1365,7 +1405,7 @@ def artifact_list() -> None:
     """List artifact families in the current project."""
     repository = _repository_context()
     server = repository["server"].rstrip("/")
-    with httpx.Client(timeout=15) as client:
+    with _http_client(timeout=15) as client:
         headers = _project_headers(_refresh_session(client, server))
         response = client.get(
             f"{server}/api/v1/projects/{repository['project_id']}/artifacts", headers=headers
@@ -1443,7 +1483,7 @@ def artifact_classify(
     """Set Maintainer-managed Artifact catalog metadata."""
     repository = _repository_context()
     server = repository["server"].rstrip("/")
-    with httpx.Client(timeout=15) as client:
+    with _http_client(timeout=15) as client:
         headers = _project_headers(_refresh_session(client, server))
         artifact_id = _resolve_artifact(
             client, server, headers, repository["project_id"], artifact
@@ -1461,7 +1501,7 @@ def artifact_classify(
 def _artifact_alias_context(reference: str) -> tuple[str, str, dict[str, str]]:
     repository = _repository_context()
     server = repository["server"].rstrip("/")
-    with httpx.Client(timeout=15) as client:
+    with _http_client(timeout=15) as client:
         headers = _project_headers(_refresh_session(client, server))
         artifact_id = _resolve_artifact(
             client, server, headers, repository["project_id"], reference
@@ -1475,7 +1515,7 @@ def artifact_alias_list(
 ) -> None:
     """List mutable labels and their exact immutable targets."""
     server, artifact_id, headers = _artifact_alias_context(artifact)
-    with httpx.Client(timeout=15) as client:
+    with _http_client(timeout=15) as client:
         response = client.get(
             f"{server}/api/v1/artifacts/{artifact_id}/aliases", headers=headers
         )
@@ -1492,7 +1532,7 @@ def artifact_alias_set(
 ) -> None:
     """Create or atomically move an audited Artifact alias."""
     server, artifact_id, headers = _artifact_alias_context(artifact)
-    with httpx.Client(timeout=15) as client:
+    with _http_client(timeout=15) as client:
         response = client.put(
             f"{server}/api/v1/artifacts/{artifact_id}/aliases/{alias}",
             headers=headers,
@@ -1510,7 +1550,7 @@ def artifact_alias_delete(
 ) -> None:
     """Delete an audited Artifact alias."""
     server, artifact_id, headers = _artifact_alias_context(artifact)
-    with httpx.Client(timeout=15) as client:
+    with _http_client(timeout=15) as client:
         response = client.delete(
             f"{server}/api/v1/artifacts/{artifact_id}/aliases/{alias}", headers=headers
         )
@@ -1546,7 +1586,7 @@ def submit_publication(
             "output": output,
         }
     server = repository["server"].rstrip("/")
-    with httpx.Client(timeout=30) as client:
+    with _http_client(timeout=30) as client:
         session = _refresh_session(client, server)
         platform_headers = _project_headers(session)
         artifact_record = _resolve_artifact_record(
@@ -1670,7 +1710,7 @@ def run(
     commit_sha = _committed_upstream_state(root)
     experiment_refs_before = _dvc_experiment_refs(root)
     secret_context: dict[str, str] | None = None
-    with httpx.Client(timeout=15) as client:
+    with _http_client(timeout=15) as client:
         session = _refresh_session(client, server)
         headers = _project_headers(session)
         _preflight_run_inputs(client, server, headers, input_versions)

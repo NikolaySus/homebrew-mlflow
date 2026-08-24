@@ -251,6 +251,9 @@ export function ProjectChooser({ hasProjects, installCommand, installAvailable }
     powershell: `${installCommand}\nhomebrew-mlflow version\nhomebrew-mlflow login --server ${quotePowerShell(server)}`,
     bash: `${installCommand}\nhomebrew-mlflow version\nhomebrew-mlflow login --server ${quoteBash(server)}`,
   };
+  const proxyBypassCommand =
+    `env -u ALL_PROXY -u all_proxy -u HTTP_PROXY -u http_proxy -u HTTPS_PROXY -u https_proxy ` +
+    `homebrew-mlflow login --server ${quoteBash(server)}`;
   return (
     <div className="homeLanding" role="region" aria-label="Project chooser">
       <div className="homeIntro">
@@ -282,6 +285,15 @@ export function ProjectChooser({ hasProjects, installCommand, installAvailable }
           commands={commands}
           disabledReason={installAvailable ? undefined : "Recommended release metadata is unavailable. Refresh before copying this command."}
         />
+        <details className="proxyTroubleshooting">
+          <summary>VPN or proxy error?</summary>
+          <p>
+            If login rejects proxy environment variables but the VPN already routes direct traffic,
+            bypass those variables for this Linux login invocation only. Do not use this when your
+            network requires the configured proxy.
+          </p>
+          <CopyField label="Linux proxy bypass" value={proxyBypassCommand} />
+        </details>
         <div className="machineAccessNote">
           <strong>Set up Git access on this client</strong>
           <p>

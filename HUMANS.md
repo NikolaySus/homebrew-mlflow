@@ -7,7 +7,7 @@ not imply that later, unlisted workflow stages are working.
 Install or replace the global platform CLI with the tested service-hosted release.
 
 ```powershell
-uv tool install --force --default-index https://ml.spkya.ru/packages/simple/ --no-build "homebrew-mlflow==0.2.9"
+uv tool install --force --default-index https://ml.spkya.ru/packages/simple/ --no-build "homebrew-mlflow==0.2.10"
 homebrew-mlflow version
 ```
 
@@ -297,6 +297,6 @@ Force an unchanged pipeline to recompute only when deliberately testing reproduc
 homebrew-mlflow run --experiment <name> -- dvc exp run --force -n <name>
 ```
 
-CLI 0.2.9 may print `homebrew-mlflow run-recover <RUN_ID>` when finalization cannot recover connectivity.
+CLI 0.2.9 and later may print `homebrew-mlflow run-recover <RUN_ID>` when finalization cannot recover connectivity.
 Run that exact command instead of rerunning computation. It is intentionally not presented above as a
 tested sequence until this repository exercises a real journal-based recovery successfully.

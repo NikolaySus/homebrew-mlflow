@@ -9,7 +9,7 @@ recorded acceptance tests.
 | PostgreSQL | 16 |
 | DVC client | 3.67.1 |
 | MLflow server and client | 3.15.1 |
-| Homebrew MLflow CLI | 0.2.9 (`>=0.2.9,<0.3`) |
+| Homebrew MLflow CLI | 0.2.10 (`>=0.2.9,<0.3`) |
 | Homebrew MLflow server plugin | 0.1.6 |
 | Research-repository MLflow plugin | 0.1.6 |
 | GitLab CE | 19.2.1-ce.0 |
