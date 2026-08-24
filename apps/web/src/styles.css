@@ -15,9 +15,9 @@ aside { min-height: 0; padding: 34px 20px; background: #08110ed9; border-right: 
 .newProject { text-align: left; color: #76d4ad; background: transparent; border: 1px dashed #355348; border-radius: 8px; padding: 11px 12px; margin-top: 6px; }.newProject:hover { background: #101f1a; }
 .docs { color: #76d4ad; text-decoration: none; margin: auto 10px 0; font-size: .85rem; }.docs + .logout { margin-top: 0; }
 .workspace { min-height: 0; height: 100dvh; padding: 14px clamp(24px, 4vw, 64px) 42px; max-width: 1500px; width: 100%; margin-inline: auto; overflow-y: auto; scrollbar-gutter: stable; }.empty { margin-top: 26vh; }.empty h2, header h2 { font-family: Georgia, serif; font-size: 3rem; font-weight: 500; margin: 8px 0; }.empty p { color: #8ba097; }
-.homeLanding { max-width: 980px; margin: clamp(46px, 10vh, 120px) auto 60px; }
+.homeLanding { max-width: 980px; margin: clamp(15px, 3.33vh, 40px) auto 60px; }
 .homeIntro { width: 100%; }
-.homeIntro h2 { margin: 8px 0 12px; font-family: Georgia, serif; font-size: clamp(2.5rem, 6vw, 4.2rem); line-height: 1; font-weight: 500; }
+.homeIntro h2 { margin: 0 0 12px; font-family: Georgia, serif; font-size: clamp(2.5rem, 6vw, 4.2rem); line-height: 1; font-weight: 500; }
 .homeIntro > p:last-child { width: 100%; color: #8ba097; font-size: 1.05rem; line-height: 1.6; }
 .homeSetup { margin-top: 30px; padding: 20px; border: 1px solid #355348; border-radius: 12px; background: #0e1b17cc; }
 .homeSetupHeader { display: flex; align-items: center; justify-content: space-between; gap: 18px; }
@@ -31,6 +31,7 @@ aside { min-height: 0; padding: 34px 20px; background: #08110ed9; border-right: 
 .machineAccessNote { margin-top: 12px; padding: 12px 14px; border-left: 2px solid #355348; background: #0a1511; color: #91aa9f; }
 .machineAccessNote strong { color: #d8e6df; font-size: .86rem; }
 .machineAccessNote p { margin: 5px 0 0; line-height: 1.5; }
+.machineAccessNote a { color: #76d4ad; }
 .createPanel { max-width: 920px; margin: 0 0 36px; padding: 26px; border: 1px solid #355348; border-radius: 12px; background: #0e1b17cc; }.createPanel h2 { font-family: Georgia, serif; font-size: 2.4rem; font-weight: 500; margin: 8px 0; }.claimForm { display: grid; grid-template-columns: 1fr 1fr auto; max-width: 900px; }.claimForm button { min-height: 48px; }
 header { display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #294238; padding-bottom: 8px; } code { color: #8db9a7; font-size: .78rem; overflow-wrap: anywhere; }
 section { margin-top: 32px; }.sectionTitle { display: flex; align-items: center; gap: 10px; }.sectionTitle h3 { font-size: 1.05rem; }.sectionTitle span { color: #789087; border: 1px solid #314b41; border-radius: 99px; padding: 2px 8px; font-size: .75rem; }
@@ -193,6 +194,6 @@ section { margin-top: 32px; }.sectionTitle { display: flex; align-items: center;
   .shellTabs { width: 100%; }
   .shellTabs button, .shellTabs.sharedShell span { flex: 1; text-align: center; }
   .workflowIntro > .workflowIntroTitle { font-size: 1.4rem; }
-  .homeLanding { margin-top: 28px; }
+  .homeLanding { margin-top: 9px; }
   .homeSetupHeader { align-items: flex-start; flex-direction: column; gap: 10px; }
 }

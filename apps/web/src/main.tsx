@@ -257,7 +257,6 @@ export function ProjectChooser({ hasProjects, installCommand, installAvailable }
   return (
     <div className="homeLanding" role="region" aria-label="Project chooser">
       <div className="homeIntro">
-        <p className="eyebrow">RESEARCH ARCHIVE</p>
         <h2>{hasProjects ? "Choose a research project" : "No research projects yet"}</h2>
         <p>
           {hasProjects
@@ -298,9 +297,17 @@ export function ProjectChooser({ hasProjects, installCommand, installAvailable }
           <strong>Set up Git access on this client</strong>
           <p>
             On every client machine, including your first, generate a separate SSH key and add its
-            public key to your GitLab profile before cloning over SSH. The GitLab SSH key authenticates
-            Git; <code>homebrew-mlflow login</code>{" "}separately authenticates the platform, MLflow,
-            and DVC access.
+            public key to your{" "}
+            <a
+              href="https://git.ml.spkya.ru/-/user_settings/ssh_keys"
+              target="_blank"
+              rel="noreferrer"
+            >
+              GitLab profile
+            </a>{" "}
+            before cloning over SSH. The GitLab SSH key authenticates Git;{" "}
+            <code>homebrew-mlflow login</code>{" "}separately authenticates the platform, MLflow, and
+            DVC access.
           </p>
         </div>
       </section>

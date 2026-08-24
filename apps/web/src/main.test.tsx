@@ -223,6 +223,7 @@ describe("project chooser onboarding", () => {
     expect(command.value).toContain("uv tool install --force --no-build");
     expect(command.value).toContain("homebrew-mlflow version");
     expect(command.value).toContain("homebrew-mlflow login --server 'http://localhost:3000'");
+    expect(screen.queryByText("RESEARCH ARCHIVE")).toBeNull();
     expect(command.value).not.toContain("env -u ALL_PROXY");
     const proxyTroubleshooting = screen.getByText("VPN or proxy error?").parentElement;
     expect(proxyTroubleshooting).not.toBeNull();
@@ -238,6 +239,11 @@ describe("project chooser onboarding", () => {
     expect(machineAccessNote).not.toBeNull();
     expect(screen.getByText(/On every client machine, including your first/)).not.toBeNull();
     expect(screen.getByText(/GitLab SSH key authenticates Git/)).not.toBeNull();
+    const sshKeys = screen.getByRole("link", { name: "GitLab profile" });
+    expect(sshKeys.getAttribute("href")).toBe(
+      "https://git.ml.spkya.ru/-/user_settings/ssh_keys",
+    );
+    expect(sshKeys.getAttribute("target")).toBe("_blank");
     expect(machineAccessNote?.textContent).toContain(
       "homebrew-mlflow login separately authenticates",
     );
