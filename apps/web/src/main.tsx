@@ -271,6 +271,14 @@ export function ProjectChooser({ hasProjects, installCommand, installAvailable }
           commands={commands}
           disabledReason={installAvailable ? undefined : "Recommended release metadata is unavailable. Refresh before copying this command."}
         />
+        <div className="machineAccessNote">
+          <strong>Using another client machine?</strong>
+          <p>
+            Generate a separate SSH key there and add its public key to your GitLab profile before
+            cloning over SSH. The GitLab SSH key authenticates Git; <code>homebrew-mlflow login</code>
+            separately authenticates the platform, MLflow, and DVC access.
+          </p>
+        </div>
       </section>
     </div>
   );

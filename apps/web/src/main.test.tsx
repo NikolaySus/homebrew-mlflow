@@ -222,6 +222,9 @@ describe("project chooser onboarding", () => {
     expect(command.value).toContain("uv tool install --force --no-build");
     expect(command.value).toContain("homebrew-mlflow version");
     expect(command.value).toContain("homebrew-mlflow login --server 'http://localhost:3000'");
+    expect(screen.getByText("Using another client machine?")).not.toBeNull();
+    expect(screen.getByText(/GitLab SSH key authenticates Git/)).not.toBeNull();
+    expect(screen.getByText(/separately authenticates the platform, MLflow, and DVC access/)).not.toBeNull();
     const docs = screen.getByRole("link", { name: "API reference" });
     expect(docs.getAttribute("href")).toBe("/docs");
     expect(docs.getAttribute("target")).toBe("_blank");

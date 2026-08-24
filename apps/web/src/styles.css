@@ -1,4 +1,4 @@
-:root { font-family: Inter, ui-sans-serif, system-ui, sans-serif; color: #e8f0ec; background: #09110f; font-synthesis: none; }
+:root { font-family: Inter, ui-sans-serif, system-ui, sans-serif; color: #e8f0ec; background: #09110f; font-synthesis: none; scrollbar-gutter: stable; }
 * { box-sizing: border-box; } body { margin: 0; min-width: 320px; min-height: 100vh; } button, input, select, textarea { font: inherit; }
 body::before { content: ""; position: fixed; inset: 0; background: radial-gradient(circle at 75% 5%, #174b3c55 0, transparent 38%), linear-gradient(135deg, #09110f, #101d19); z-index: -1; }
 .login { max-width: 820px; margin: 0 auto; padding: 17vh 32px 64px; }
@@ -10,7 +10,7 @@ form button { border: 0; background: #76d4ad; color: #092017; border-radius: 8px
 .primary { display: inline-block; margin-top: 24px; background: #76d4ad; color: #092017; text-decoration: none; border-radius: 8px; padding: 13px 18px; font-weight: 750; }
 .shell { min-height: 100vh; display: grid; grid-template-columns: 260px 1fr; }
 aside { padding: 34px 20px; background: #08110ed9; border-right: 1px solid #263d35; display: flex; flex-direction: column; gap: 8px; }
-.brand { width: fit-content; font-family: Georgia, serif; font-size: 1.75rem; line-height: .95; margin: 0 0 44px 8px; padding: 0; color: #e8f0ec; background: transparent; border: 0; text-align: left; }.brand:hover, .brand:focus-visible { color: #76d4ad; }.label { margin: 8px; }
+.brand { width: fit-content; font-family: Georgia, serif; font-size: 1.75rem; line-height: .95; margin: 0 0 33px 8px; padding: 0; color: #e8f0ec; background: transparent; border: 0; text-align: left; }.brand:hover, .brand:focus-visible { color: #76d4ad; }.label { margin: 8px; }
 .nav, .selected, .artifact { text-align: left; color: #b8c8c1; border: 1px solid transparent; background: transparent; border-radius: 8px; padding: 11px 12px; }.selected { color: #e8f0ec; background: #183127; border-color: #355348; }.nav:hover { background: #101f1a; }.nav small, .selected small { display: block; color: #71847c; margin-top: 4px; }.logout { margin-top: auto; color: #83968e; background: transparent; border: 0; text-align: left; padding: 10px; }
 .newProject { text-align: left; color: #76d4ad; background: transparent; border: 1px dashed #355348; border-radius: 8px; padding: 11px 12px; margin-top: 6px; }.newProject:hover { background: #101f1a; }
 .docs { color: #76d4ad; text-decoration: none; margin: auto 10px 0; font-size: .85rem; }.docs + .logout { margin-top: 0; }
@@ -25,6 +25,9 @@ aside { padding: 34px 20px; background: #08110ed9; border-right: 1px solid #263d
 .homeSetupHeader h3 { margin: 0; font-size: 1.05rem; }
 .resourceLink { flex: 0 0 auto; color: #76d4ad; font-size: .85rem; }
 .homeSetup > .hint { max-width: 760px; line-height: 1.5; }
+.machineAccessNote { margin-top: 12px; padding: 12px 14px; border-left: 2px solid #355348; background: #0a1511; color: #91aa9f; }
+.machineAccessNote strong { color: #d8e6df; font-size: .86rem; }
+.machineAccessNote p { margin: 5px 0 0; line-height: 1.5; }
 .createPanel { max-width: 920px; margin: 0 0 36px; padding: 26px; border: 1px solid #355348; border-radius: 12px; background: #0e1b17cc; }.createPanel h2 { font-family: Georgia, serif; font-size: 2.4rem; font-weight: 500; margin: 8px 0; }.claimForm { display: grid; grid-template-columns: 1fr 1fr auto; max-width: 900px; }.claimForm button { min-height: 48px; }
 header { display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #294238; padding-bottom: 8px; } code { color: #8db9a7; font-size: .78rem; overflow-wrap: anywhere; }
 section { margin-top: 32px; }.sectionTitle { display: flex; align-items: center; gap: 10px; }.sectionTitle h3 { font-size: 1.05rem; }.sectionTitle span { color: #789087; border: 1px solid #314b41; border-radius: 99px; padding: 2px 8px; font-size: .75rem; }
