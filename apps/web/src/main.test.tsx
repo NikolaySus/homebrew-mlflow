@@ -29,7 +29,8 @@ describe("metric progress", () => {
     );
   });
 
-  it("renders one labeled point per Experiment and a line only for comparisons", () => {
+  it("renders inset clickable points and reveals copyable selected details", async () => {
+    const user = userEvent.setup();
     const point = {
       experiment_id: "experiment_1",
       experiment_name: "Candidate sealed",
@@ -44,9 +45,14 @@ describe("metric progress", () => {
       <ProgressChart metricKey="candidate_sealed_rmsle" points={[point]} />,
     );
     expect(screen.getByRole("img", { name: /candidate_sealed_rmsle progress/ })).not.toBeNull();
-    expect(screen.getAllByText("Candidate sealed")).toHaveLength(2);
+    expect(screen.getByText("Candidate sealed")).not.toBeNull();
     expect(container.querySelectorAll("circle")).toHaveLength(1);
     expect(container.querySelector(".progressLine")).toBeNull();
+    expect(screen.queryByLabelText("Selected metric point details")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Select Candidate sealed metric point" }));
+    const details = screen.getByLabelText("Selected metric point details");
+    expect(within(details).getByText("run_1")).not.toBeNull();
+    expect(within(details).getByText("candidate_sealed_rmsle")).not.toBeNull();
 
     rerender(
       <ProgressChart
@@ -59,6 +65,12 @@ describe("metric progress", () => {
     );
     expect(container.querySelectorAll("circle")).toHaveLength(2);
     expect(container.querySelector(".progressLine")).not.toBeNull();
+    for (const circle of container.querySelectorAll("circle")) {
+      expect(Number(circle.getAttribute("cx"))).toBeGreaterThan(72);
+      expect(Number(circle.getAttribute("cx"))).toBeLessThan(870);
+      expect(Number(circle.getAttribute("cy"))).toBeGreaterThan(28);
+      expect(Number(circle.getAttribute("cy"))).toBeLessThan(305);
+    }
   });
 });
 

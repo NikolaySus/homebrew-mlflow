@@ -2456,6 +2456,13 @@ function compactExperimentName(value: string) {
 }
 
 export function ProgressChart({ metricKey, points }: { metricKey: string; points: ProgressPoint[] }) {
+  const [selectedExperimentId, setSelectedExperimentId] = useState<string | null>(null);
+  useEffect(() => setSelectedExperimentId(null), [metricKey]);
+  useEffect(() => {
+    if (selectedExperimentId && !points.some((point) => point.experiment_id === selectedExperimentId)) {
+      setSelectedExperimentId(null);
+    }
+  }, [points, selectedExperimentId]);
   const width = 900;
   const height = 360;
   const left = 72;
@@ -2471,19 +2478,26 @@ export function ProgressChart({ metricKey, points }: { metricKey: string; points
   const rawMaxTime = Math.max(...times);
   const rawMinValue = Math.min(...values);
   const rawMaxValue = Math.max(...values);
-  const timeSpan = rawMaxTime - rawMinTime;
-  const valuePadding = Math.max(Math.abs(rawMaxValue) * 0.05, (rawMaxValue - rawMinValue) * 0.1, 1e-12);
-  const minValue = rawMinValue === rawMaxValue ? rawMinValue - valuePadding : rawMinValue;
-  const maxValue = rawMinValue === rawMaxValue ? rawMaxValue + valuePadding : rawMaxValue;
-  const x = (time: number) => timeSpan === 0
-    ? left + (width - left - right) / 2
-    : left + ((time - rawMinTime) / timeSpan) * (width - left - right);
+  const rawTimeSpan = rawMaxTime - rawMinTime;
+  const timePadding = rawTimeSpan === 0 ? 12 * 60 * 60 * 1000 : rawTimeSpan * 0.05;
+  const minTime = rawMinTime - timePadding;
+  const maxTime = rawMaxTime + timePadding;
+  const timeSpan = maxTime - minTime;
+  const rawValueSpan = rawMaxValue - rawMinValue;
+  const valuePadding = Math.max(Math.abs(rawMaxValue) * 0.05, rawValueSpan * 0.08, 1e-12);
+  const minValue = rawMinValue - valuePadding;
+  const maxValue = rawMaxValue + valuePadding;
+  const x = (time: number) => left + ((time - minTime) / timeSpan) * (width - left - right);
   const y = (value: number) => top + ((maxValue - value) / (maxValue - minValue)) * (height - top - bottom);
   const coordinates = sorted.map((point) => ({ point, x: x(Date.parse(point.run_at)), y: y(point.value) }));
   const line = coordinates.map((point) => `${point.x},${point.y}`).join(" ");
   const yTicks = Array.from({ length: 5 }, (_, index) => minValue + ((maxValue - minValue) * index) / 4);
-  const firstDate = new Date(rawMinTime).toLocaleDateString();
-  const lastDate = new Date(rawMaxTime).toLocaleDateString();
+  const firstDate = new Date(minTime).toLocaleDateString();
+  const lastDate = new Date(maxTime).toLocaleDateString();
+  const selectedPoint = sorted.find((point) => point.experiment_id === selectedExperimentId) ?? null;
+  function selectPoint(point: ProgressPoint) {
+    setSelectedExperimentId(point.experiment_id);
+  }
   return (
     <div className="progressChartSurface">
       <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${metricKey} progress by Experiment`}>
@@ -2498,7 +2512,21 @@ export function ProgressChart({ metricKey, points }: { metricKey: string; points
         <line className="progressAxis" x1={left} x2={width - right} y1={height - bottom} y2={height - bottom} />
         {coordinates.length > 1 && <polyline className="progressLine" points={line} />}
         {coordinates.map(({ point, x: pointX, y: pointY }, index) => (
-          <g key={point.experiment_id} tabIndex={0} className="progressPoint">
+          <g
+            key={point.experiment_id}
+            tabIndex={0}
+            role="button"
+            aria-label={`Select ${point.experiment_name} metric point`}
+            aria-pressed={selectedExperimentId === point.experiment_id}
+            className={`progressPoint${selectedExperimentId === point.experiment_id ? " selected" : ""}`}
+            onClick={() => selectPoint(point)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                selectPoint(point);
+              }
+            }}
+          >
             <title>
               {`${point.experiment_name}: ${point.value} · ${new Date(point.run_at).toLocaleString()} · ${point.run_id}`}
             </title>
@@ -2515,15 +2543,28 @@ export function ProgressChart({ metricKey, points }: { metricKey: string; points
         <text className="progressAxisLabel" x={left} y={height - 18}>{firstDate}</text>
         <text className="progressAxisLabel" x={width - right} y={height - 18} textAnchor="end">{lastDate}</text>
       </svg>
-      <div className="progressChartSummary" aria-label="Metric progress values">
-        {sorted.map((point) => (
-          <span key={point.experiment_id}>
-            <strong>{point.experiment_name}</strong>{" "}
-            <code>{Number(point.value.toPrecision(8))}</code>{" "}
-            <small>{new Date(point.run_at).toLocaleString()}</small>
-          </span>
-        ))}
-      </div>
+      {selectedPoint && (
+        <div className="progressPointDetails" aria-label="Selected metric point details">
+          <div className="progressPointDetailsHeader">
+            <strong>{selectedPoint.experiment_name}</strong>
+            <span className={`state compactState ${selectedPoint.run_state}`}>
+              {selectedPoint.run_state}
+            </span>
+          </div>
+          <CopyField label="Experiment" value={selectedPoint.experiment_name} />
+          <CopyField label="Experiment ID" value={selectedPoint.experiment_id} />
+          <CopyField label="Run ID" value={selectedPoint.run_id} />
+          <CopyField label="Run state" value={selectedPoint.run_state} />
+          <CopyField label="Metric" value={metricKey} />
+          <CopyField label="Value" value={String(selectedPoint.value)} />
+          <CopyField label="Run time" value={new Date(selectedPoint.run_at).toISOString()} />
+          <CopyField
+            label="Metric timestamp (ms)"
+            value={String(selectedPoint.metric_timestamp_ms)}
+          />
+          <CopyField label="Metric step" value={String(selectedPoint.metric_step)} />
+        </div>
+      )}
     </div>
   );
 }

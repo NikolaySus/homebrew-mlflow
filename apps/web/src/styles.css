@@ -134,14 +134,12 @@ section { margin-top: 32px; }.sectionTitle { display: flex; align-items: center;
 .progressAxis { stroke: #587268; stroke-width: 1.25; }
 .progressAxisLabel { fill: #789087; font-size: 12px; }
 .progressLine { fill: none; stroke: #76d4ad; stroke-width: 2; vector-effect: non-scaling-stroke; }
-.progressPoint { outline: none; }
+.progressPoint { outline: none; cursor: pointer; }
 .progressPoint circle { fill: #76d4ad; stroke: #092017; stroke-width: 2; vector-effect: non-scaling-stroke; }
 .progressPoint text { fill: #c5d9d0; font-size: 11px; paint-order: stroke; stroke: #0e1b17; stroke-width: 3px; stroke-linejoin: round; }
-.progressPoint:focus circle { stroke: #f4c675; stroke-width: 4; }
-.progressChartSummary { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 7px 14px; margin-top: 12px; }
-.progressChartSummary span { min-width: 0; display: flex; align-items: baseline; gap: 7px; }
-.progressChartSummary strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.progressChartSummary small { color: #789087; margin-left: auto; white-space: nowrap; }
+.progressPoint:focus circle, .progressPoint.selected circle { stroke: #f4c675; stroke-width: 4; }
+.progressPointDetails { display: grid; gap: 8px; margin-top: 12px; padding-top: 14px; border-top: 1px solid #294238; }
+.progressPointDetailsHeader { display: flex; align-items: center; gap: 10px; margin-bottom: 2px; }
 .progressDefaultControl { margin-top: 22px; padding-top: 14px; border-top: 1px solid #294238; display: grid; grid-template-columns: minmax(220px, 1fr) minmax(220px, 360px) auto; gap: 12px; align-items: end; }
 .progressDefaultControl > div { display: flex; flex-direction: column; gap: 4px; }
 .progressDefaultControl small { color: #789087; }
