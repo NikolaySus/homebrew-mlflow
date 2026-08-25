@@ -47,6 +47,7 @@ from .metric_progress import (
     MetricProgressPoint,
     MetricProgressService,
     MetricProgressUnitOfWork,
+    ProgressDisplayMode,
 )
 from .mlflow_sessions import (
     MlflowBrowserSessionService,
@@ -177,6 +178,7 @@ __all__ = [
     "MetricProgressPoint",
     "MetricProgressService",
     "MetricProgressUnitOfWork",
+    "ProgressDisplayMode",
     "MembershipUnitOfWork",
     "MlflowBrowserSessionService",
     "MlflowBrowserSessionStore",

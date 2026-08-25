@@ -2,11 +2,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from enum import StrEnum
 from typing import Protocol
 
 from homebrew_mlflow.domain import AuditEvent, MachineScope, ProjectRole, PublicId, permits
 
 from .projects import AuthorizationDenied, ResourceConflict
+
+
+class ProgressDisplayMode(StrEnum):
+    DEFAULT = "default"
+    MINIMIZE = "minimize"
+    MAXIMIZE = "maximize"
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,6 +38,7 @@ class MetricProgressPoint:
 @dataclass(frozen=True, slots=True)
 class MetricProgressCatalog:
     default_metric_key: str | None
+    default_display_mode: ProgressDisplayMode
     metrics: tuple[MetricProgressMetric, ...]
 
 
@@ -38,6 +46,8 @@ class MetricProgressUnitOfWork(Protocol):
     def project_role(self, project_id: PublicId, principal_id: PublicId) -> ProjectRole | None: ...
 
     def default_progress_metric(self, project_id: PublicId) -> str | None: ...
+
+    def default_progress_metric_mode(self, project_id: PublicId) -> ProgressDisplayMode: ...
 
     def metric_progress_catalog(
         self, project_id: PublicId
@@ -47,7 +57,12 @@ class MetricProgressUnitOfWork(Protocol):
         self, project_id: PublicId, metric_key: str
     ) -> tuple[MetricProgressPoint, ...]: ...
 
-    def set_default_progress_metric(self, project_id: PublicId, metric_key: str | None) -> None: ...
+    def set_default_progress_metric(
+        self,
+        project_id: PublicId,
+        metric_key: str | None,
+        display_mode: ProgressDisplayMode,
+    ) -> None: ...
 
     def append_audit(self, event: AuditEvent) -> None: ...
 
@@ -62,6 +77,7 @@ class MetricProgressService:
         self._require_read(actor_id, project_id)
         return MetricProgressCatalog(
             self._uow.default_progress_metric(project_id),
+            self._uow.default_progress_metric_mode(project_id),
             self._uow.metric_progress_catalog(project_id),
         )
 
@@ -81,6 +97,7 @@ class MetricProgressService:
         actor_id: PublicId,
         project_id: PublicId,
         metric_key: str | None,
+        display_mode: ProgressDisplayMode,
         request_id: PublicId,
         now: datetime,
     ) -> MetricProgressCatalog:
@@ -92,8 +109,10 @@ class MetricProgressService:
         metrics = self._uow.metric_progress_catalog(project_id)
         if normalized is not None and normalized not in {value.key for value in metrics}:
             raise ResourceConflict("default metric is not available in an active Experiment")
+        normalized_mode = display_mode if normalized is not None else ProgressDisplayMode.DEFAULT
         previous = self._uow.default_progress_metric(project_id)
-        self._uow.set_default_progress_metric(project_id, normalized)
+        previous_mode = self._uow.default_progress_metric_mode(project_id)
+        self._uow.set_default_progress_metric(project_id, normalized, normalized_mode)
         self._uow.append_audit(
             AuditEvent(
                 actor_principal_id=actor_id,
@@ -103,12 +122,17 @@ class MetricProgressService:
                 outcome="success",
                 request_id=request_id,
                 project_id=project_id,
-                safe_metadata={"previous": previous, "current": normalized},
+                safe_metadata={
+                    "previous_metric": previous,
+                    "current_metric": normalized,
+                    "previous_mode": previous_mode.value,
+                    "current_mode": normalized_mode.value,
+                },
                 occurred_at=now,
             )
         )
         self._uow.commit()
-        return MetricProgressCatalog(normalized, metrics)
+        return MetricProgressCatalog(normalized, normalized_mode, metrics)
 
     def _require_read(self, actor_id: PublicId, project_id: PublicId) -> None:
         role = self._uow.project_role(project_id, actor_id)

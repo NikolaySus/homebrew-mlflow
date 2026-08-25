@@ -2,7 +2,12 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 import pytest
-from homebrew_mlflow.application import AuthorizationDenied, MetricProgressService, ResourceConflict
+from homebrew_mlflow.application import (
+    AuthorizationDenied,
+    MetricProgressService,
+    ProgressDisplayMode,
+    ResourceConflict,
+)
 from homebrew_mlflow.domain import PublicId, ResourceKind
 from homebrew_mlflow.infrastructure.database import (
     AuditEventRow,
@@ -209,22 +214,32 @@ def test_progress_aggregates_latest_finite_values_for_active_experiments() -> No
             principal_id,
             project_id,
             "score",
+            ProgressDisplayMode.MINIMIZE,
             public_id(ResourceKind.REQUEST),
             now,
         )
         assert result.default_metric_key == "score"
+        assert result.default_display_mode is ProgressDisplayMode.MINIMIZE
         assert unit_of_work.default_progress_metric(project_id) == "score"
+        assert unit_of_work.default_progress_metric_mode(project_id) is ProgressDisplayMode.MINIMIZE
         audit = session.scalar(
             select(AuditEventRow).where(
                 AuditEventRow.action == "project.metric_progress_default.update"
             )
         )
         assert audit is not None
+        assert audit.safe_metadata == {
+            "previous_metric": None,
+            "current_metric": "score",
+            "previous_mode": "default",
+            "current_mode": "minimize",
+        }
         with pytest.raises(AuthorizationDenied):
             MetricProgressService(unit_of_work).set_default(
                 viewer_id,
                 project_id,
                 "score",
+                ProgressDisplayMode.MAXIMIZE,
                 public_id(ResourceKind.REQUEST),
                 now,
             )
@@ -233,6 +248,17 @@ def test_progress_aggregates_latest_finite_values_for_active_experiments() -> No
                 principal_id,
                 project_id,
                 "missing",
+                ProgressDisplayMode.DEFAULT,
                 public_id(ResourceKind.REQUEST),
                 now,
             )
+        cleared = MetricProgressService(unit_of_work).set_default(
+            principal_id,
+            project_id,
+            None,
+            ProgressDisplayMode.MAXIMIZE,
+            public_id(ResourceKind.REQUEST),
+            now,
+        )
+        assert cleared.default_metric_key is None
+        assert cleared.default_display_mode is ProgressDisplayMode.DEFAULT

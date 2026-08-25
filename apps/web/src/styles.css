@@ -134,13 +134,23 @@ section { margin-top: 32px; }.sectionTitle { display: flex; align-items: center;
 .progressAxis { stroke: #587268; stroke-width: 1.25; }
 .progressAxisLabel { fill: #789087; font-size: 12px; }
 .progressLine { fill: none; stroke: #76d4ad; stroke-width: 2; vector-effect: non-scaling-stroke; }
+.progressFrontier { fill: none; stroke: #76d4ad; stroke-width: 2.5; vector-effect: non-scaling-stroke; }
 .progressPoint { outline: none; cursor: pointer; }
 .progressPoint circle { fill: #76d4ad; stroke: #092017; stroke-width: 2; vector-effect: non-scaling-stroke; }
+.progressPoint.otherResult circle { fill: #789087; opacity: .48; stroke: #0e1b17; }
+.progressPoint.improvement circle { fill: #76d4ad; }
 .progressPoint text { fill: #c5d9d0; font-size: 11px; paint-order: stroke; stroke: #0e1b17; stroke-width: 3px; stroke-linejoin: round; }
 .progressPoint:focus circle, .progressPoint.selected circle { stroke: #f4c675; stroke-width: 4; }
+.progressPoint.otherResult:focus circle, .progressPoint.otherResult.selected circle { opacity: 1; }
+.progressModeLegend { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin: 0 0 8px; color: #9db2a9; font-size: 12px; }
+.progressModeLegend span { display: inline-flex; align-items: center; gap: 6px; }
+.progressModeLegend strong { margin-left: auto; color: #c5d9d0; font-weight: 600; }
+.progressModeLegend i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: #76d4ad; }
+.progressModeLegend .progressLegendOther { background: #789087; opacity: .48; }
+.progressModeLegend .progressLegendLine { width: 18px; height: 2px; border-radius: 0; background: #76d4ad; }
 .progressPointDetails { display: grid; gap: 8px; margin-top: 12px; padding-top: 14px; border-top: 1px solid #294238; }
 .progressPointDetailsHeader { display: flex; align-items: center; gap: 10px; margin-bottom: 2px; }
-.progressDefaultControl { margin-top: 22px; padding-top: 14px; border-top: 1px solid #294238; display: grid; grid-template-columns: minmax(220px, 1fr) minmax(220px, 360px) auto; gap: 12px; align-items: end; }
+.progressDefaultControl { margin-top: 22px; padding-top: 14px; border-top: 1px solid #294238; display: grid; grid-template-columns: minmax(220px, 1fr) minmax(200px, 320px) minmax(160px, 220px) auto; gap: 12px; align-items: end; }
 .progressDefaultControl > div { display: flex; flex-direction: column; gap: 4px; }
 .progressDefaultControl small { color: #789087; }
 .progressDefaultControl select { min-width: 0; }

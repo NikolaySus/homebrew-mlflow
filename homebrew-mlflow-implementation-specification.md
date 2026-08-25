@@ -901,7 +901,10 @@ The initial UI must support:
 - project Progress views compare a selected scalar metric as one latest finite point per active
   Experiment, positioned by Run completion time with Run creation as the unfinished fallback;
 - Progress metric discovery is ordered by latest contributing Run activity and then metric name;
-  a Maintainer may set a project default while a user's valid browser-local choice takes precedence;
+  a Maintainer may set a project default and its display mode while a user's valid browser-local
+  metric choice takes precedence; the default mode preserves the chronological all-results line,
+  while minimize and maximize modes retain every point but emphasize strict running improvements
+  with a running-best step frontier and apply only when the project default metric is viewed;
 - metric history visualization and Run provenance;
 - Artifact family/version browsing, integrity/availability state, size, file count, and file index;
 - Artifact classification plus audited mutable aliases that always resolve to exact immutable versions;

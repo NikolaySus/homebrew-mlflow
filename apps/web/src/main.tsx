@@ -213,7 +213,12 @@ type ClientReleaseResponse = {
   install_commands: { uv: string; pipx: string };
 };
 type ProgressMetric = { key: string; experiment_count: number; latest_run_at: string };
-type ProgressCatalog = { default_metric_key: string | null; metrics: ProgressMetric[] };
+export type ProgressDisplayMode = "default" | "minimize" | "maximize";
+type ProgressCatalog = {
+  default_metric_key: string | null;
+  default_display_mode: ProgressDisplayMode;
+  metrics: ProgressMetric[];
+};
 type ProgressPoint = {
   experiment_id: string;
   experiment_name: string;
@@ -261,6 +266,14 @@ export function resolveProgressMetric(
   if (available.has(savedMetric)) return savedMetric;
   if (defaultMetric && available.has(defaultMetric)) return defaultMetric;
   return metrics[0]?.key ?? "";
+}
+
+export function resolveProgressDisplayMode(
+  selectedMetric: string,
+  defaultMetric: string | null,
+  configuredMode: ProgressDisplayMode,
+): ProgressDisplayMode {
+  return selectedMetric === defaultMetric ? configuredMode : "default";
 }
 
 export function runCountsByExperiment(runs: Run[]) {
@@ -528,6 +541,8 @@ export function App() {
   const [progressLoading, setProgressLoading] = useState(false);
   const [progressError, setProgressError] = useState("");
   const [progressDefaultDraft, setProgressDefaultDraft] = useState("");
+  const [progressDefaultModeDraft, setProgressDefaultModeDraft] =
+    useState<ProgressDisplayMode>("default");
   const [progressDefaultSaving, setProgressDefaultSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -640,6 +655,8 @@ export function App() {
     setProgressMetric("");
     setProgressPoints([]);
     setProgressError("");
+    setProgressDefaultDraft("");
+    setProgressDefaultModeDraft("default");
     setAudit([]);
     setAuditTotal(0);
     setAuditNextBefore(null);
@@ -715,6 +732,7 @@ export function App() {
         if (cancelled) return;
         setProgressCatalog(catalog);
         setProgressDefaultDraft(catalog.default_metric_key ?? "");
+        setProgressDefaultModeDraft(catalog.default_display_mode);
         const available = new Set(catalog.metrics.map((metric) => metric.key));
         let saved = "";
         const storageKey = progressMetricStorageKey(me.principal_id, projectId);
@@ -890,11 +908,15 @@ export function App() {
         `/api/v1/projects/${projectId}/metric-progress/default`,
         {
           method: "PUT",
-          body: JSON.stringify({ metric_key: progressDefaultDraft || null }),
+          body: JSON.stringify({
+            metric_key: progressDefaultDraft || null,
+            display_mode: progressDefaultDraft ? progressDefaultModeDraft : "default",
+          }),
         },
       );
       setProgressCatalog(catalog);
       setProgressDefaultDraft(catalog.default_metric_key ?? "");
+      setProgressDefaultModeDraft(catalog.default_display_mode);
       setProgressError("");
     } catch (value) {
       setProgressError(String(value));
@@ -1904,7 +1926,17 @@ export function App() {
                     </p>
                   )}
                   {!progressLoading && !progressError && progressMetric && progressPoints.length > 0 && (
-                    <ProgressChart metricKey={progressMetric} points={progressPoints} />
+                    <ProgressChart
+                      metricKey={progressMetric}
+                      points={progressPoints}
+                      displayMode={
+                        resolveProgressDisplayMode(
+                          progressMetric,
+                          progressCatalog?.default_metric_key ?? null,
+                          progressCatalog?.default_display_mode ?? "default",
+                        )
+                      }
+                    />
                   )}
                   {!progressLoading && !progressError && progressMetric && progressPoints.length === 0 && (
                     <p className="hint compactHint">No active Experiment has this metric.</p>
@@ -1915,21 +1947,43 @@ export function App() {
                         <strong>Default metric for this project</strong>
                         <small>
                           Used for people who have not chosen a personal metric in this browser.
+                          Optimization modes highlight strict running improvements.
                         </small>
                       </div>
                       <select
                         aria-label="Default Progress metric"
                         value={progressDefaultDraft}
-                        onChange={(event) => setProgressDefaultDraft(event.target.value)}
+                        onChange={(event) => {
+                          setProgressDefaultDraft(event.target.value);
+                          if (!event.target.value) setProgressDefaultModeDraft("default");
+                        }}
                       >
                         <option value="">Automatic (latest activity)</option>
                         {progressCatalog.metrics.map((metric) => (
                           <option key={metric.key} value={metric.key}>{metric.key}</option>
                         ))}
                       </select>
+                      <select
+                        aria-label="Default Progress display mode"
+                        value={progressDefaultModeDraft}
+                        disabled={!progressDefaultDraft}
+                        onChange={(event) =>
+                          setProgressDefaultModeDraft(event.target.value as ProgressDisplayMode)
+                        }
+                      >
+                        <option value="default">Default</option>
+                        <option value="minimize">Less is better</option>
+                        <option value="maximize">Higher is better</option>
+                      </select>
                       <button
                         type="button"
-                        disabled={progressDefaultSaving || progressDefaultDraft === (progressCatalog.default_metric_key ?? "")}
+                        disabled={
+                          progressDefaultSaving
+                          || (
+                            progressDefaultDraft === (progressCatalog.default_metric_key ?? "")
+                            && progressDefaultModeDraft === progressCatalog.default_display_mode
+                          )
+                        }
                         onClick={saveProgressDefault}
                       >
                         {progressDefaultSaving ? "Saving…" : "Save default"}
@@ -2455,9 +2509,30 @@ function compactExperimentName(value: string) {
   return value.length > 24 ? `${value.slice(0, 21)}…` : value;
 }
 
-export function ProgressChart({ metricKey, points }: { metricKey: string; points: ProgressPoint[] }) {
+export function progressImprovementIndexes(values: number[], mode: ProgressDisplayMode) {
+  if (mode === "default") return new Set(values.map((_value, index) => index));
+  const improvements = new Set<number>();
+  let best: number | null = null;
+  values.forEach((value, index) => {
+    if (
+      best === null
+      || (mode === "minimize" && value < best)
+      || (mode === "maximize" && value > best)
+    ) {
+      improvements.add(index);
+      best = value;
+    }
+  });
+  return improvements;
+}
+
+export function ProgressChart({ metricKey, points, displayMode = "default" }: {
+  metricKey: string;
+  points: ProgressPoint[];
+  displayMode?: ProgressDisplayMode;
+}) {
   const [selectedExperimentId, setSelectedExperimentId] = useState<string | null>(null);
-  useEffect(() => setSelectedExperimentId(null), [metricKey]);
+  useEffect(() => setSelectedExperimentId(null), [metricKey, displayMode]);
   useEffect(() => {
     if (selectedExperimentId && !points.some((point) => point.experiment_id === selectedExperimentId)) {
       setSelectedExperimentId(null);
@@ -2491,6 +2566,13 @@ export function ProgressChart({ metricKey, points }: { metricKey: string; points
   const y = (value: number) => top + ((maxValue - value) / (maxValue - minValue)) * (height - top - bottom);
   const coordinates = sorted.map((point) => ({ point, x: x(Date.parse(point.run_at)), y: y(point.value) }));
   const line = coordinates.map((point) => `${point.x},${point.y}`).join(" ");
+  const improvementIndexes = progressImprovementIndexes(values, displayMode);
+  const frontierPath = coordinates.map((coordinate, index) => {
+    if (index === 0) return `M ${coordinate.x} ${coordinate.y}`;
+    const horizontal = `H ${coordinate.x}`;
+    if (!improvementIndexes.has(index)) return horizontal;
+    return `${horizontal} V ${coordinate.y}`;
+  }).join(" ");
   const yTicks = Array.from({ length: 5 }, (_, index) => minValue + ((maxValue - minValue) * index) / 4);
   const firstDate = new Date(minTime).toLocaleDateString();
   const lastDate = new Date(maxTime).toLocaleDateString();
@@ -2500,6 +2582,14 @@ export function ProgressChart({ metricKey, points }: { metricKey: string; points
   }
   return (
     <div className="progressChartSurface">
+      {displayMode !== "default" && (
+        <div className="progressModeLegend" aria-label="Progress display legend">
+          <span><i className="progressLegendImprovement" />Improvement</span>
+          <span><i className="progressLegendOther" />Other result</span>
+          <span><i className="progressLegendLine" />Running best</span>
+          <strong>{displayMode === "minimize" ? "Less is better" : "Higher is better"}</strong>
+        </div>
+      )}
       <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${metricKey} progress by Experiment`}>
         {yTicks.map((tick) => (
           <g key={tick}>
@@ -2510,7 +2600,12 @@ export function ProgressChart({ metricKey, points }: { metricKey: string; points
           </g>
         ))}
         <line className="progressAxis" x1={left} x2={width - right} y1={height - bottom} y2={height - bottom} />
-        {coordinates.length > 1 && <polyline className="progressLine" points={line} />}
+        {coordinates.length > 1 && displayMode === "default" && (
+          <polyline className="progressLine" points={line} />
+        )}
+        {coordinates.length > 1 && displayMode !== "default" && (
+          <path className="progressFrontier" d={frontierPath} />
+        )}
         {coordinates.map(({ point, x: pointX, y: pointY }, index) => (
           <g
             key={point.experiment_id}
@@ -2518,7 +2613,13 @@ export function ProgressChart({ metricKey, points }: { metricKey: string; points
             role="button"
             aria-label={`Select ${point.experiment_name} metric point`}
             aria-pressed={selectedExperimentId === point.experiment_id}
-            className={`progressPoint${selectedExperimentId === point.experiment_id ? " selected" : ""}`}
+            className={[
+              "progressPoint",
+              displayMode !== "default" && (
+                improvementIndexes.has(index) ? "improvement" : "otherResult"
+              ),
+              selectedExperimentId === point.experiment_id && "selected",
+            ].filter(Boolean).join(" ")}
             onClick={() => selectPoint(point)}
             onKeyDown={(event) => {
               if (event.key === "Enter" || event.key === " ") {
@@ -2531,13 +2632,17 @@ export function ProgressChart({ metricKey, points }: { metricKey: string; points
               {`${point.experiment_name}: ${point.value} · ${new Date(point.run_at).toLocaleString()} · ${point.run_id}`}
             </title>
             <circle cx={pointX} cy={pointY} r="5" />
-            <text
-              x={pointX}
-              y={pointY + (index % 2 === 0 ? -10 : 18)}
-              textAnchor={pointX > width - 145 ? "end" : pointX < left + 115 ? "start" : "middle"}
-            >
-              {compactExperimentName(point.experiment_name)}
-            </text>
+            {(displayMode === "default"
+              || improvementIndexes.has(index)
+              || selectedExperimentId === point.experiment_id) && (
+              <text
+                x={pointX}
+                y={pointY + (index % 2 === 0 ? -10 : 18)}
+                textAnchor={pointX > width - 145 ? "end" : pointX < left + 115 ? "start" : "middle"}
+              >
+                {compactExperimentName(point.experiment_name)}
+              </text>
+            )}
           </g>
         ))}
         <text className="progressAxisLabel" x={left} y={height - 18}>{firstDate}</text>

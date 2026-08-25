@@ -16,6 +16,7 @@ from homebrew_mlflow.application import (
     NewRefreshCredential,
     OrganizationPrincipalView,
     OrganizationRoleView,
+    ProgressDisplayMode,
     ProjectMembershipView,
     ProjectRoleView,
     RepositoryProvisioningJob,
@@ -142,6 +143,12 @@ class GitLabIdentityBindingRow(Base):
 
 class ResearchProjectRow(Base):
     __tablename__ = "research_projects"
+    __table_args__ = (
+        CheckConstraint(
+            "default_progress_metric_mode IN ('default', 'minimize', 'maximize')",
+            name="ck_research_projects_progress_metric_mode",
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
     public_id: Mapped[str] = mapped_column(String(64), unique=True)
@@ -154,6 +161,9 @@ class ResearchProjectRow(Base):
     gitlab_namespace_id: Mapped[str | None] = mapped_column(String(100))
     failure_code: Mapped[str | None] = mapped_column(String(100))
     default_progress_metric_key: Mapped[str | None] = mapped_column(String(250))
+    default_progress_metric_mode: Mapped[str] = mapped_column(
+        String(24), nullable=False, default="default", server_default="default"
+    )
     updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     claimed_by: Mapped[str | None] = mapped_column(String(100))
@@ -2673,6 +2683,14 @@ class SqlAlchemyMetricProgressUnitOfWork(SqlAlchemyRunUnitOfWork):
             )
         )
 
+    def default_progress_metric_mode(self, project_id: PublicId) -> ProgressDisplayMode:
+        value = self._session.scalar(
+            select(ResearchProjectRow.default_progress_metric_mode).where(
+                ResearchProjectRow.public_id == str(project_id)
+            )
+        )
+        return ProgressDisplayMode(value or ProgressDisplayMode.DEFAULT.value)
+
     def metric_progress_catalog(
         self, project_id: PublicId
     ) -> tuple[MetricProgressMetric, ...]:
@@ -2712,7 +2730,10 @@ class SqlAlchemyMetricProgressUnitOfWork(SqlAlchemyRunUnitOfWork):
         )
 
     def set_default_progress_metric(
-        self, project_id: PublicId, metric_key: str | None
+        self,
+        project_id: PublicId,
+        metric_key: str | None,
+        display_mode: ProgressDisplayMode,
     ) -> None:
         row = self._session.scalar(
             select(ResearchProjectRow).where(ResearchProjectRow.public_id == str(project_id))
@@ -2720,6 +2741,7 @@ class SqlAlchemyMetricProgressUnitOfWork(SqlAlchemyRunUnitOfWork):
         if row is None:
             raise ValueError("Research Project does not exist")
         row.default_progress_metric_key = metric_key
+        row.default_progress_metric_mode = display_mode.value
         row.updated_at = datetime.now(UTC)
 
     def _latest_progress_rows(

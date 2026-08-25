@@ -8,6 +8,7 @@ from homebrew_mlflow.application import (
     AccessTokenClaims,
     MetricProgressCatalog,
     MetricProgressService,
+    ProgressDisplayMode,
 )
 from homebrew_mlflow.domain import PublicId, ResourceKind
 from homebrew_mlflow.infrastructure import SqlAlchemyMetricProgressUnitOfWork, create_session
@@ -31,6 +32,7 @@ class MetricProgressCatalogResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     default_metric_key: str | None
+    default_display_mode: ProgressDisplayMode
     metrics: list[MetricProgressMetricResponse]
 
 
@@ -58,6 +60,7 @@ class SetDefaultMetricRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     metric_key: str | None = Field(default=None, max_length=250)
+    display_mode: ProgressDisplayMode = ProgressDisplayMode.DEFAULT
 
 
 def _project_id(value: str) -> PublicId:
@@ -70,6 +73,7 @@ def _project_id(value: str) -> PublicId:
 def _catalog_response(catalog: MetricProgressCatalog) -> MetricProgressCatalogResponse:
     return MetricProgressCatalogResponse(
         default_metric_key=catalog.default_metric_key,
+        default_display_mode=catalog.default_display_mode,
         metrics=[
             MetricProgressMetricResponse(
                 key=value.key,
@@ -135,6 +139,7 @@ def set_metric_progress_default(
             claims.principal_id,
             parsed,
             body.metric_key,
+            body.display_mode,
             PublicId(ResourceKind.REQUEST, request.state.request_id),
             datetime.now(UTC),
         )

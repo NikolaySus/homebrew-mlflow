@@ -420,7 +420,7 @@
     },
     "/api/v1/projects/{project_id}/metric-progress/default": {
       "put": {
-        "operationId": "setProjectMetricProgressDefault", "summary": "Set or clear the project default Progress metric", "security": [{"bearerAuth": []}],
+        "operationId": "setProjectMetricProgressDefault", "summary": "Set or clear the project default Progress metric and display mode", "security": [{"bearerAuth": []}],
         "parameters": [{"name": "project_id", "in": "path", "required": true, "schema": {"type": "string"}}],
         "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/SetDefaultMetricRequest"}}}},
         "responses": {"200": {"description": "Updated metric progress catalog", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/MetricProgressCatalogResponse"}}}}, "403": {"description": "Maintainer required", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorEnvelope"}}}}, "409": {"description": "Metric is unavailable", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorEnvelope"}}}}}
@@ -1228,8 +1228,8 @@
         "properties": {"key": {"type": "string", "minLength": 1, "maxLength": 250}, "value": {"type": "number"}, "timestamp_ms": {"type": "integer", "minimum": 0}, "step": {"type": "integer", "minimum": 0, "default": 0}}
       },
       "MetricProgressCatalogResponse": {
-        "type": "object", "additionalProperties": false, "required": ["default_metric_key", "metrics"],
-        "properties": {"default_metric_key": {"type": ["string", "null"]}, "metrics": {"type": "array", "items": {"$ref": "#/components/schemas/MetricProgressMetricResponse"}}}
+        "type": "object", "additionalProperties": false, "required": ["default_metric_key", "default_display_mode", "metrics"],
+        "properties": {"default_metric_key": {"type": ["string", "null"]}, "default_display_mode": {"$ref": "#/components/schemas/ProgressDisplayMode"}, "metrics": {"type": "array", "items": {"$ref": "#/components/schemas/MetricProgressMetricResponse"}}}
       },
       "MetricProgressMetricResponse": {
         "type": "object", "additionalProperties": false, "required": ["key", "experiment_count", "latest_run_at"],
@@ -1246,7 +1246,10 @@
       },
       "SetDefaultMetricRequest": {
         "type": "object", "additionalProperties": false,
-        "properties": {"metric_key": {"type": ["string", "null"], "maxLength": 250}}
+        "properties": {"metric_key": {"type": ["string", "null"], "maxLength": 250}, "display_mode": {"$ref": "#/components/schemas/ProgressDisplayMode", "default": "default"}}
+      },
+      "ProgressDisplayMode": {
+        "type": "string", "enum": ["default", "minimize", "maximize"]
       },
       "TagInput": {
         "type": "object", "additionalProperties": false, "required": ["key", "value"],

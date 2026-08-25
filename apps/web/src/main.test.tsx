@@ -9,7 +9,9 @@ import {
   CompactMetadataList,
   ProgressChart,
   ProjectChooser,
+  progressImprovementIndexes,
   progressMetricStorageKey,
+  resolveProgressDisplayMode,
   resolveProgressMetric,
   suggestSlug,
 } from "./main";
@@ -27,6 +29,8 @@ describe("metric progress", () => {
     expect(progressMetricStorageKey("principal_1", "project_1")).toContain(
       "principal_1:project_1",
     );
+    expect(resolveProgressDisplayMode("default", "default", "minimize")).toBe("minimize");
+    expect(resolveProgressDisplayMode("recent", "default", "minimize")).toBe("default");
   });
 
   it("renders inset clickable points and reveals copyable selected details", async () => {
@@ -71,6 +75,36 @@ describe("metric progress", () => {
       expect(Number(circle.getAttribute("cy"))).toBeGreaterThan(28);
       expect(Number(circle.getAttribute("cy"))).toBeLessThan(305);
     }
+  });
+
+  it("draws strict running-best frontiers and keeps other results selectable", async () => {
+    expect([...progressImprovementIndexes([5, 6, 4, 4, 3], "minimize")]).toEqual([0, 2, 4]);
+    expect([...progressImprovementIndexes([5, 6, 4, 6], "maximize")]).toEqual([0, 1]);
+    const user = userEvent.setup();
+    const base = {
+      run_state: "succeeded",
+      metric_timestamp_ms: 1,
+      metric_step: 0,
+    };
+    const { container } = render(
+      <ProgressChart
+        metricKey="loss"
+        displayMode="minimize"
+        points={[
+          { ...base, experiment_id: "experiment_1", experiment_name: "Baseline", run_id: "run_1", value: 5, run_at: "2026-08-23T12:00:00Z" },
+          { ...base, experiment_id: "experiment_2", experiment_name: "Discarded", run_id: "run_2", value: 6, run_at: "2026-08-24T12:00:00Z" },
+          { ...base, experiment_id: "experiment_3", experiment_name: "Improved", run_id: "run_3", value: 4, run_at: "2026-08-25T12:00:00Z" },
+        ]}
+      />,
+    );
+    expect(container.querySelector(".progressLine")).toBeNull();
+    expect(container.querySelector(".progressFrontier")?.getAttribute("d")).toContain(" H ");
+    expect(container.querySelectorAll(".progressPoint.improvement")).toHaveLength(2);
+    expect(container.querySelectorAll(".progressPoint.otherResult")).toHaveLength(1);
+    expect(screen.queryByText("Discarded")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Select Discarded metric point" }));
+    expect(screen.getAllByText("Discarded").length).toBeGreaterThan(0);
+    expect(screen.getByLabelText("Selected metric point details")).not.toBeNull();
   });
 });
 

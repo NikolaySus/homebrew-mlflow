@@ -131,6 +131,8 @@ def test_metric_progress_contract_is_project_scoped_and_configurable() -> None:
     assert "/api/v1/projects/{project_id}/metric-progress" in paths
     assert "/api/v1/projects/{project_id}/metric-progress/points" in paths
     assert "/api/v1/projects/{project_id}/metric-progress/default" in paths
+    assert "default_display_mode" in schemas["MetricProgressCatalogResponse"]["required"]
+    assert schemas["ProgressDisplayMode"]["enum"] == ["default", "minimize", "maximize"]
     assert schemas["MetricProgressPointResponse"]["required"] == [
         "experiment_id",
         "experiment_name",

@@ -324,6 +324,7 @@ def test_authenticated_user_claims_installation_once(monkeypatch) -> None:  # ty
         f"/api/v1/projects/{project.json()['id']}/metric-progress", headers=headers
     )
     assert progress_catalog.status_code == 200
+    assert progress_catalog.json()["default_display_mode"] == "default"
     assert progress_catalog.json()["metrics"][0]["key"] == "loss"
     assert progress_catalog.json()["metrics"][0]["experiment_count"] == 1
     progress_points = client.get(
@@ -336,10 +337,17 @@ def test_authenticated_user_claims_installation_once(monkeypatch) -> None:  # ty
     progress_default = client.put(
         f"/api/v1/projects/{project.json()['id']}/metric-progress/default",
         headers=headers,
-        json={"metric_key": "loss"},
+        json={"metric_key": "loss", "display_mode": "minimize"},
     )
     assert progress_default.status_code == 200
     assert progress_default.json()["default_metric_key"] == "loss"
+    assert progress_default.json()["default_display_mode"] == "minimize"
+    invalid_progress_mode = client.put(
+        f"/api/v1/projects/{project.json()['id']}/metric-progress/default",
+        headers=headers,
+        json={"metric_key": "loss", "display_mode": "sideways"},
+    )
+    assert invalid_progress_mode.status_code == 422
     conflicting = client.post(
         f"/api/v1/runs/{run.json()['id']}/finalize",
         headers={**headers, "Idempotency-Key": "acceptance-finalization"},
