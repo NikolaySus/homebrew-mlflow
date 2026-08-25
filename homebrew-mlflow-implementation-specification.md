@@ -898,6 +898,10 @@ The initial UI must support:
 - Experiment and Run creation/browsing/comparison;
 - active Experiment browsing exposes Run counts and filtered Run navigation; active views omit
   archived Experiments and their Runs without changing their canonical records or provenance;
+- project Progress views compare a selected scalar metric as one latest finite point per active
+  Experiment, positioned by Run completion time with Run creation as the unfinished fallback;
+- Progress metric discovery is ordered by latest contributing Run activity and then metric name;
+  a Maintainer may set a project default while a user's valid browser-local choice takes precedence;
 - metric history visualization and Run provenance;
 - Artifact family/version browsing, integrity/availability state, size, file count, and file index;
 - Artifact classification plus audited mutable aliases that always resolve to exact immutable versions;

@@ -7,9 +7,60 @@ import {
   App,
   CompactAuditList,
   CompactMetadataList,
+  ProgressChart,
   ProjectChooser,
+  progressMetricStorageKey,
+  resolveProgressMetric,
   suggestSlug,
 } from "./main";
+
+describe("metric progress", () => {
+  const metrics = [
+    { key: "recent", experiment_count: 2, latest_run_at: "2026-08-25T12:00:00Z" },
+    { key: "default", experiment_count: 1, latest_run_at: "2026-08-24T12:00:00Z" },
+  ];
+
+  it("prefers a valid personal choice, then the project default, then recent activity", () => {
+    expect(resolveProgressMetric(metrics, "recent", "default")).toBe("recent");
+    expect(resolveProgressMetric(metrics, "missing", "default")).toBe("default");
+    expect(resolveProgressMetric(metrics, "missing", "missing")).toBe("recent");
+    expect(progressMetricStorageKey("principal_1", "project_1")).toContain(
+      "principal_1:project_1",
+    );
+  });
+
+  it("renders one labeled point per Experiment and a line only for comparisons", () => {
+    const point = {
+      experiment_id: "experiment_1",
+      experiment_name: "Candidate sealed",
+      run_id: "run_1",
+      run_state: "succeeded",
+      value: 0.1234,
+      run_at: "2026-08-25T12:00:00Z",
+      metric_timestamp_ms: 1,
+      metric_step: 0,
+    };
+    const { container, rerender } = render(
+      <ProgressChart metricKey="candidate_sealed_rmsle" points={[point]} />,
+    );
+    expect(screen.getByRole("img", { name: /candidate_sealed_rmsle progress/ })).not.toBeNull();
+    expect(screen.getAllByText("Candidate sealed")).toHaveLength(2);
+    expect(container.querySelectorAll("circle")).toHaveLength(1);
+    expect(container.querySelector(".progressLine")).toBeNull();
+
+    rerender(
+      <ProgressChart
+        metricKey="candidate_sealed_rmsle"
+        points={[
+          point,
+          { ...point, experiment_id: "experiment_2", experiment_name: "Candidate two", value: 0.11 },
+        ]}
+      />,
+    );
+    expect(container.querySelectorAll("circle")).toHaveLength(2);
+    expect(container.querySelector(".progressLine")).not.toBeNull();
+  });
+});
 
 afterEach(() => {
   cleanup();

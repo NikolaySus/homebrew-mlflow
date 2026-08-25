@@ -126,6 +126,28 @@ section { margin-top: 32px; }.sectionTitle { display: flex; align-items: center;
 .versionSummary span { flex: 1 1 210px; overflow-wrap: anywhere; }
 .tabs { display: flex; gap: 4px; margin: 0; border-bottom: 1px solid #294238; overflow-x: auto; scrollbar-width: thin; }.tabs button { flex: 0 0 auto; padding: 8px 14px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: #82968d; text-transform: capitalize; }.tabs button.active { color: #baf1d9; border-color: #76d4ad; }
 .inlineForm, .stackForm { max-width: none; margin: 14px 0 22px; }.inlineForm input, .inlineForm select, .stackForm input, .stackForm select { min-width: 0; color: #e8f0ec; background: #111f1a; border: 1px solid #355348; border-radius: 8px; padding: 11px 13px; }.inlineForm button, .stackForm button { border: 0; border-radius: 8px; padding: 10px 16px; background: #76d4ad; color: #092017; font-weight: 750; }.stackForm { display: grid; grid-template-columns: repeat(3, minmax(160px, 1fr)); }.stackForm button { min-height: 44px; }.compact { margin: 8px 0; }.split { display: grid; grid-template-columns: minmax(240px, 31%) 1fr; gap: 14px; }.runList { display: flex; flex-direction: column; gap: 7px; }.runList .state { align-self: start; }.inspector { background: #0e1b17cc; border: 1px solid #355348; border-radius: 10px; padding: 20px; min-width: 0; }.inspector > div:first-child { display: flex; gap: 12px; justify-content: space-between; }.chart { margin-top: 18px; display: grid; grid-template-columns: 100px 1fr 80px; align-items: center; gap: 10px; color: #91aa9f; }.chart svg { height: 80px; width: 100%; border-bottom: 1px solid #294238; }.chart polyline { fill: none; stroke: #76d4ad; stroke-width: 2; vector-effect: non-scaling-stroke; }.versions article { cursor: pointer; }.versions article.chosen { border-color: #76d4ad; background: #142820; }.versionInspector { margin-top: 18px; }.columns { display: grid !important; grid-template-columns: 1fr 1fr; gap: 24px; }.file { display: flex; justify-content: space-between; gap: 10px; border-bottom: 1px solid #1e332b; padding-bottom: 7px; }.file span { color: #71877e; white-space: nowrap; }.linkButton { background: transparent; border: 0; color: #efaca6; text-decoration: underline; }.table { border: 1px solid #294238; border-radius: 10px; overflow: hidden; }.table > div { display: flex; justify-content: space-between; gap: 15px; padding: 12px 15px; background: #0e1b17aa; border-bottom: 1px solid #294238; }.table > div:last-child { border-bottom: 0; }.table span { display: flex; flex-direction: column; gap: 3px; }.table small { color: #70867d; }.audit { max-height: 500px; overflow-y: auto; }.statusline { color: #9bb0a7; }.eventLog { padding: 16px; background: #07100d; border: 1px solid #294238; border-radius: 8px; color: #9ed8bf; max-height: 280px; overflow: auto; }
+.progressMetricSelector { max-width: 520px; margin: 0 0 14px; }
+.progressMetricSelector select { width: 100%; }
+.progressChartSurface { min-width: 0; border: 1px solid #294238; border-radius: 10px; background: #0e1b17aa; padding: 14px; overflow-x: auto; }
+.progressChartSurface svg { display: block; width: 100%; min-width: 620px; height: auto; }
+.progressGrid { stroke: #21372e; stroke-width: 1; }
+.progressAxis { stroke: #587268; stroke-width: 1.25; }
+.progressAxisLabel { fill: #789087; font-size: 12px; }
+.progressLine { fill: none; stroke: #76d4ad; stroke-width: 2; vector-effect: non-scaling-stroke; }
+.progressPoint { outline: none; }
+.progressPoint circle { fill: #76d4ad; stroke: #092017; stroke-width: 2; vector-effect: non-scaling-stroke; }
+.progressPoint text { fill: #c5d9d0; font-size: 11px; paint-order: stroke; stroke: #0e1b17; stroke-width: 3px; stroke-linejoin: round; }
+.progressPoint:focus circle { stroke: #f4c675; stroke-width: 4; }
+.progressChartSummary { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 7px 14px; margin-top: 12px; }
+.progressChartSummary span { min-width: 0; display: flex; align-items: baseline; gap: 7px; }
+.progressChartSummary strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.progressChartSummary small { color: #789087; margin-left: auto; white-space: nowrap; }
+.progressDefaultControl { margin-top: 22px; padding-top: 14px; border-top: 1px solid #294238; display: grid; grid-template-columns: minmax(220px, 1fr) minmax(220px, 360px) auto; gap: 12px; align-items: end; }
+.progressDefaultControl > div { display: flex; flex-direction: column; gap: 4px; }
+.progressDefaultControl small { color: #789087; }
+.progressDefaultControl select { min-width: 0; }
+.progressDefaultControl button { min-height: 42px; }
+.progressError { margin: 0 0 12px; }
 @media (max-width: 1100px) { .repositoryItem { grid-template-columns: minmax(0, 1fr) auto; } .repositoryLocation { grid-column: 1 / -1; grid-row: 2; } .repositoryActions { grid-column: 2; grid-row: 1; } }
 @media (max-width: 1100px) { .overviewInfoGroup { grid-template-columns: 1fr; gap: 9px; } .overviewInfoGroup .sectionTitle { padding-top: 0; } }
 @media (max-width: 760px) { body { overflow: auto; } .shell { display: block; height: auto; min-height: 100vh; overflow: visible; } aside { position: static; min-height: auto; overflow: visible; border-right: 0; border-bottom: 1px solid #263d35; }.brand { margin-bottom: 18px; }.docs { margin-top: 16px; }.logout { margin-top: 0; }.workspace { height: auto; overflow: visible; padding-top: 14px; }.artifactLayout, .split, .columns { grid-template-columns: 1fr; } .stackForm { grid-template-columns: 1fr; } .inlineForm { flex-direction: column; } header { align-items: start; flex-direction: column; gap: 12px; } .metadataItem { align-items: flex-start; } .experimentMetadataItem, .environmentMetadataItem, .catalogMetadataItem { grid-template-columns: minmax(0, 1fr) auto; } .experimentMetadataItem code, .experimentMetadataItem > small, .environmentMetadataItem code, .environmentMetadataItem small, .catalogMetadataItem code, .catalogMetadataItem small { grid-column: 1 / -1; text-align: left; } .experimentMetadataItem > .linkButton { grid-column: 2; grid-row: 1; } .repositoryItem { grid-template-columns: 1fr; } .repositoryLocation, .repositoryActions { grid-column: 1; grid-row: auto; } .repositoryActions { justify-content: flex-start; } }
@@ -196,4 +218,5 @@ section { margin-top: 32px; }.sectionTitle { display: flex; align-items: center;
   .workflowIntro > .workflowIntroTitle { font-size: 1.4rem; }
   .homeLanding { margin-top: 9px; }
   .homeSetupHeader { align-items: flex-start; flex-direction: column; gap: 10px; }
+  .progressDefaultControl { grid-template-columns: 1fr; align-items: stretch; }
 }

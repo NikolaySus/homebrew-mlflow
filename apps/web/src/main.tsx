@@ -212,7 +212,20 @@ type SharedReference = {
 type ClientReleaseResponse = {
   install_commands: { uv: string; pipx: string };
 };
-type Tab = "overview" | "workflows" | "runs" | "artifacts" | "access";
+type ProgressMetric = { key: string; experiment_count: number; latest_run_at: string };
+type ProgressCatalog = { default_metric_key: string | null; metrics: ProgressMetric[] };
+type ProgressPoint = {
+  experiment_id: string;
+  experiment_name: string;
+  run_id: string;
+  run_state: string;
+  value: number;
+  run_at: string;
+  metric_timestamp_ms: number;
+  metric_step: number;
+};
+type ProgressPoints = { metric_key: string; points: ProgressPoint[] };
+type Tab = "overview" | "workflows" | "progress" | "runs" | "artifacts" | "access";
 
 function csrfToken() {
   const value = document.cookie
@@ -233,6 +246,21 @@ export function suggestSlug(name: string) {
 export function activeRunsForExperiments(runs: Run[], experiments: Experiment[]) {
   const activeExperimentIds = new Set(experiments.map((experiment) => experiment.id));
   return runs.filter((run) => activeExperimentIds.has(run.experiment_id));
+}
+
+export function progressMetricStorageKey(principalId: string, projectId: string) {
+  return `homebrew-mlflow:progress-metric:${principalId}:${projectId}`;
+}
+
+export function resolveProgressMetric(
+  metrics: ProgressMetric[],
+  savedMetric: string,
+  defaultMetric: string | null,
+) {
+  const available = new Set(metrics.map((metric) => metric.key));
+  if (available.has(savedMetric)) return savedMetric;
+  if (defaultMetric && available.has(defaultMetric)) return defaultMetric;
+  return metrics[0]?.key ?? "";
 }
 
 export function runCountsByExperiment(runs: Run[]) {
@@ -494,6 +522,13 @@ export function App() {
     [],
   );
   const [publicationLog, setPublicationLog] = useState<string[]>([]);
+  const [progressCatalog, setProgressCatalog] = useState<ProgressCatalog | null>(null);
+  const [progressMetric, setProgressMetric] = useState("");
+  const [progressPoints, setProgressPoints] = useState<ProgressPoint[]>([]);
+  const [progressLoading, setProgressLoading] = useState(false);
+  const [progressError, setProgressError] = useState("");
+  const [progressDefaultDraft, setProgressDefaultDraft] = useState("");
+  const [progressDefaultSaving, setProgressDefaultSaving] = useState(false);
   const [error, setError] = useState("");
 
   async function refreshBrowserSession() {
@@ -601,6 +636,10 @@ export function App() {
     setVersion(null);
     setMachineSecret("");
     setPublicationLog([]);
+    setProgressCatalog(null);
+    setProgressMetric("");
+    setProgressPoints([]);
+    setProgressError("");
     setAudit([]);
     setAuditTotal(0);
     setAuditNextBefore(null);
@@ -665,6 +704,63 @@ export function App() {
       )
       .catch(showError);
   }, [projectId, token, projects]);
+
+  useEffect(() => {
+    if (tab !== "progress" || !projectId || !me) return;
+    let cancelled = false;
+    setProgressLoading(true);
+    setProgressError("");
+    request<ProgressCatalog>(`/api/v1/projects/${projectId}/metric-progress`)
+      .then((catalog) => {
+        if (cancelled) return;
+        setProgressCatalog(catalog);
+        setProgressDefaultDraft(catalog.default_metric_key ?? "");
+        const available = new Set(catalog.metrics.map((metric) => metric.key));
+        let saved = "";
+        const storageKey = progressMetricStorageKey(me.principal_id, projectId);
+        try {
+          saved = window.localStorage.getItem(storageKey) ?? "";
+          if (saved && !available.has(saved)) window.localStorage.removeItem(storageKey);
+        } catch {
+          saved = "";
+        }
+        const next = resolveProgressMetric(catalog.metrics, saved, catalog.default_metric_key);
+        setProgressMetric(next);
+        if (!next) setProgressLoading(false);
+      })
+      .catch((value) => {
+        if (cancelled) return;
+        setProgressError(String(value));
+        setProgressLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [tab, projectId, me?.principal_id, token]);
+
+  useEffect(() => {
+    if (tab !== "progress" || !projectId || !progressMetric) return;
+    let cancelled = false;
+    setProgressLoading(true);
+    setProgressError("");
+    request<ProgressPoints>(
+      `/api/v1/projects/${projectId}/metric-progress/points?metric_key=${encodeURIComponent(progressMetric)}`,
+    )
+      .then((value) => {
+        if (cancelled) return;
+        setProgressPoints(value.points);
+        setProgressLoading(false);
+      })
+      .catch((value) => {
+        if (cancelled) return;
+        setProgressPoints([]);
+        setProgressError(String(value));
+        setProgressLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [tab, projectId, progressMetric, token]);
 
   async function loadOlderAuditEvents() {
     if (auditNextBefore === null || auditLoading) return;
@@ -770,6 +866,41 @@ export function App() {
   function clearExperimentFilter() {
     setExperimentFilterId("");
     setRunDetail(null);
+  }
+
+  function chooseProgressMetric(metricKey: string) {
+    setProgressMetric(metricKey);
+    if (me && projectId) {
+      try {
+        window.localStorage.setItem(
+          progressMetricStorageKey(me.principal_id, projectId),
+          metricKey,
+        );
+      } catch {
+        // Storage may be unavailable in privacy-restricted browser contexts.
+      }
+    }
+  }
+
+  async function saveProgressDefault() {
+    if (!projectId) return;
+    setProgressDefaultSaving(true);
+    try {
+      const catalog = await request<ProgressCatalog>(
+        `/api/v1/projects/${projectId}/metric-progress/default`,
+        {
+          method: "PUT",
+          body: JSON.stringify({ metric_key: progressDefaultDraft || null }),
+        },
+      );
+      setProgressCatalog(catalog);
+      setProgressDefaultDraft(catalog.default_metric_key ?? "");
+      setProgressError("");
+    } catch (value) {
+      setProgressError(String(value));
+    } finally {
+      setProgressDefaultSaving(false);
+    }
   }
 
   useEffect(() => {
@@ -1536,7 +1667,7 @@ export function App() {
               </div>
             </header>
             <nav className="tabs">
-              {(["overview", "workflows", "runs", "artifacts", "access"] as Tab[]).map(
+              {(["overview", "workflows", "progress", "runs", "artifacts", "access"] as Tab[]).map(
                 (value) => (
                   <button
                     key={value}
@@ -1737,6 +1868,76 @@ export function App() {
                 artifacts={artifacts}
                 runs={activeRuns}
               />
+            )}
+            {tab === "progress" && (
+              <div className="tabSections">
+                <section className="progressSection">
+                  <Title title="Metric progress" count={progressPoints.length} />
+                  <p className="hint">
+                    Compare the latest finite value recorded by each active Experiment. Time follows
+                    the selected Run&apos;s completion, or its creation while unfinished.
+                  </p>
+                  {progressCatalog && progressCatalog.metrics.length > 0 && (
+                    <label className="field progressMetricSelector">
+                      Metric
+                      <select
+                        aria-label="Progress metric"
+                        value={progressMetric}
+                        onChange={(event) => chooseProgressMetric(event.target.value)}
+                      >
+                        {progressCatalog.metrics.map((metric) => (
+                          <option key={metric.key} value={metric.key}>
+                            {metric.key} ({metric.experiment_count}{" "}
+                            {metric.experiment_count === 1 ? "Experiment" : "Experiments"})
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+                  {progressLoading && <p className="muted">Loading metric progress…</p>}
+                  {!progressLoading && progressError && (
+                    <p className="error progressError">{progressError}</p>
+                  )}
+                  {!progressLoading && !progressError && progressCatalog?.metrics.length === 0 && (
+                    <p className="hint compactHint">
+                      Metrics appear after Runs in active Experiments log finite scalar values.
+                    </p>
+                  )}
+                  {!progressLoading && !progressError && progressMetric && progressPoints.length > 0 && (
+                    <ProgressChart metricKey={progressMetric} points={progressPoints} />
+                  )}
+                  {!progressLoading && !progressError && progressMetric && progressPoints.length === 0 && (
+                    <p className="hint compactHint">No active Experiment has this metric.</p>
+                  )}
+                  {canManageArtifacts && progressCatalog && progressCatalog.metrics.length > 0 && (
+                    <div className="progressDefaultControl">
+                      <div>
+                        <strong>Default metric for this project</strong>
+                        <small>
+                          Used for people who have not chosen a personal metric in this browser.
+                        </small>
+                      </div>
+                      <select
+                        aria-label="Default Progress metric"
+                        value={progressDefaultDraft}
+                        onChange={(event) => setProgressDefaultDraft(event.target.value)}
+                      >
+                        <option value="">Automatic (latest activity)</option>
+                        {progressCatalog.metrics.map((metric) => (
+                          <option key={metric.key} value={metric.key}>{metric.key}</option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        disabled={progressDefaultSaving || progressDefaultDraft === (progressCatalog.default_metric_key ?? "")}
+                        onClick={saveProgressDefault}
+                      >
+                        {progressDefaultSaving ? "Saving…" : "Save default"}
+                      </button>
+                    </div>
+                  )}
+                </section>
+              </div>
             )}
             {tab === "runs" && (
               <div className="tabSections">
@@ -2247,6 +2448,83 @@ function RunInspector({ detail }: { detail: RunDetail }) {
         />
       ))}
     </article>
+  );
+}
+
+function compactExperimentName(value: string) {
+  return value.length > 24 ? `${value.slice(0, 21)}…` : value;
+}
+
+export function ProgressChart({ metricKey, points }: { metricKey: string; points: ProgressPoint[] }) {
+  const width = 900;
+  const height = 360;
+  const left = 72;
+  const right = 30;
+  const top = 28;
+  const bottom = 55;
+  const sorted = [...points].sort(
+    (a, b) => Date.parse(a.run_at) - Date.parse(b.run_at) || a.experiment_name.localeCompare(b.experiment_name),
+  );
+  const times = sorted.map((point) => Date.parse(point.run_at));
+  const values = sorted.map((point) => point.value);
+  const rawMinTime = Math.min(...times);
+  const rawMaxTime = Math.max(...times);
+  const rawMinValue = Math.min(...values);
+  const rawMaxValue = Math.max(...values);
+  const timeSpan = rawMaxTime - rawMinTime;
+  const valuePadding = Math.max(Math.abs(rawMaxValue) * 0.05, (rawMaxValue - rawMinValue) * 0.1, 1e-12);
+  const minValue = rawMinValue === rawMaxValue ? rawMinValue - valuePadding : rawMinValue;
+  const maxValue = rawMinValue === rawMaxValue ? rawMaxValue + valuePadding : rawMaxValue;
+  const x = (time: number) => timeSpan === 0
+    ? left + (width - left - right) / 2
+    : left + ((time - rawMinTime) / timeSpan) * (width - left - right);
+  const y = (value: number) => top + ((maxValue - value) / (maxValue - minValue)) * (height - top - bottom);
+  const coordinates = sorted.map((point) => ({ point, x: x(Date.parse(point.run_at)), y: y(point.value) }));
+  const line = coordinates.map((point) => `${point.x},${point.y}`).join(" ");
+  const yTicks = Array.from({ length: 5 }, (_, index) => minValue + ((maxValue - minValue) * index) / 4);
+  const firstDate = new Date(rawMinTime).toLocaleDateString();
+  const lastDate = new Date(rawMaxTime).toLocaleDateString();
+  return (
+    <div className="progressChartSurface">
+      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${metricKey} progress by Experiment`}>
+        {yTicks.map((tick) => (
+          <g key={tick}>
+            <line className="progressGrid" x1={left} x2={width - right} y1={y(tick)} y2={y(tick)} />
+            <text className="progressAxisLabel" x={left - 10} y={y(tick) + 4} textAnchor="end">
+              {Number(tick.toPrecision(5))}
+            </text>
+          </g>
+        ))}
+        <line className="progressAxis" x1={left} x2={width - right} y1={height - bottom} y2={height - bottom} />
+        {coordinates.length > 1 && <polyline className="progressLine" points={line} />}
+        {coordinates.map(({ point, x: pointX, y: pointY }, index) => (
+          <g key={point.experiment_id} tabIndex={0} className="progressPoint">
+            <title>
+              {`${point.experiment_name}: ${point.value} · ${new Date(point.run_at).toLocaleString()} · ${point.run_id}`}
+            </title>
+            <circle cx={pointX} cy={pointY} r="5" />
+            <text
+              x={pointX}
+              y={pointY + (index % 2 === 0 ? -10 : 18)}
+              textAnchor={pointX > width - 145 ? "end" : pointX < left + 115 ? "start" : "middle"}
+            >
+              {compactExperimentName(point.experiment_name)}
+            </text>
+          </g>
+        ))}
+        <text className="progressAxisLabel" x={left} y={height - 18}>{firstDate}</text>
+        <text className="progressAxisLabel" x={width - right} y={height - 18} textAnchor="end">{lastDate}</text>
+      </svg>
+      <div className="progressChartSummary" aria-label="Metric progress values">
+        {sorted.map((point) => (
+          <span key={point.experiment_id}>
+            <strong>{point.experiment_name}</strong>{" "}
+            <code>{Number(point.value.toPrecision(8))}</code>{" "}
+            <small>{new Date(point.run_at).toLocaleString()}</small>
+          </span>
+        ))}
+      </div>
+    </div>
   );
 }
 

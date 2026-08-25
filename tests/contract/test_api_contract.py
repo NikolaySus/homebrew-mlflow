@@ -123,6 +123,26 @@ def test_access_list_contracts_include_creation_timestamps() -> None:
     }
 
 
+def test_metric_progress_contract_is_project_scoped_and_configurable() -> None:
+    contract = load_openapi()
+    paths = contract["paths"]
+    schemas = contract["components"]["schemas"]
+
+    assert "/api/v1/projects/{project_id}/metric-progress" in paths
+    assert "/api/v1/projects/{project_id}/metric-progress/points" in paths
+    assert "/api/v1/projects/{project_id}/metric-progress/default" in paths
+    assert schemas["MetricProgressPointResponse"]["required"] == [
+        "experiment_id",
+        "experiment_name",
+        "run_id",
+        "run_state",
+        "value",
+        "run_at",
+        "metric_timestamp_ms",
+        "metric_step",
+    ]
+
+
 def test_swagger_ui_is_read_only() -> None:
     response = TestClient(create_app()).get("/docs")
 

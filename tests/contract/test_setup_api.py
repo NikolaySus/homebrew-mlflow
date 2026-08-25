@@ -88,6 +88,9 @@ def test_authenticated_user_claims_installation_once(monkeypatch) -> None:  # ty
     monkeypatch.setattr("homebrew_mlflow.api.projects.create_session", lambda _url: Session(engine))
     monkeypatch.setattr("homebrew_mlflow.api.runs.create_session", lambda _url: Session(engine))
     monkeypatch.setattr(
+        "homebrew_mlflow.api.metric_progress.create_session", lambda _url: Session(engine)
+    )
+    monkeypatch.setattr(
         "homebrew_mlflow.api.artifacts.create_session", lambda _url: Session(engine)
     )
     monkeypatch.setattr(
@@ -317,6 +320,26 @@ def test_authenticated_user_claims_installation_once(monkeypatch) -> None:  # ty
     )
     assert finalized.status_code == 200
     assert finalized.json()["state"] == "succeeded"
+    progress_catalog = client.get(
+        f"/api/v1/projects/{project.json()['id']}/metric-progress", headers=headers
+    )
+    assert progress_catalog.status_code == 200
+    assert progress_catalog.json()["metrics"][0]["key"] == "loss"
+    assert progress_catalog.json()["metrics"][0]["experiment_count"] == 1
+    progress_points = client.get(
+        f"/api/v1/projects/{project.json()['id']}/metric-progress/points",
+        headers=headers,
+        params={"metric_key": "loss"},
+    )
+    assert progress_points.status_code == 200
+    assert progress_points.json()["points"][0]["value"] == 0.25
+    progress_default = client.put(
+        f"/api/v1/projects/{project.json()['id']}/metric-progress/default",
+        headers=headers,
+        json={"metric_key": "loss"},
+    )
+    assert progress_default.status_code == 200
+    assert progress_default.json()["default_metric_key"] == "loss"
     conflicting = client.post(
         f"/api/v1/runs/{run.json()['id']}/finalize",
         headers={**headers, "Idempotency-Key": "acceptance-finalization"},

@@ -9,6 +9,8 @@ from uuid import UUID, uuid4
 from homebrew_mlflow.application import (
     AuditEventView,
     HostedNamespace,
+    MetricProgressMetric,
+    MetricProgressPoint,
     MeView,
     NewMlflowBrowserSession,
     NewRefreshCredential,
@@ -95,6 +97,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
+from sqlalchemy.sql.selectable import Subquery
 
 
 def _utc(value: datetime) -> datetime:
@@ -150,6 +153,7 @@ class ResearchProjectRow(Base):
     state: Mapped[str] = mapped_column(String(24), default=ProjectState.PROVISIONING.value)
     gitlab_namespace_id: Mapped[str | None] = mapped_column(String(100))
     failure_code: Mapped[str | None] = mapped_column(String(100))
+    default_progress_metric_key: Mapped[str | None] = mapped_column(String(250))
     updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     claimed_by: Mapped[str | None] = mapped_column(String(100))
@@ -2659,6 +2663,104 @@ class SqlAlchemyTrackingUnitOfWork(SqlAlchemyRunUnitOfWork):
             )
             for run in runs
         )
+
+
+class SqlAlchemyMetricProgressUnitOfWork(SqlAlchemyRunUnitOfWork):
+    def default_progress_metric(self, project_id: PublicId) -> str | None:
+        return self._session.scalar(
+            select(ResearchProjectRow.default_progress_metric_key).where(
+                ResearchProjectRow.public_id == str(project_id)
+            )
+        )
+
+    def metric_progress_catalog(
+        self, project_id: PublicId
+    ) -> tuple[MetricProgressMetric, ...]:
+        latest = self._latest_progress_rows(project_id)
+        values = self._session.execute(
+            select(latest.c.key, func.count(), func.max(latest.c.run_at))
+            .where(latest.c.rank == 1)
+            .group_by(latest.c.key)
+            .order_by(func.max(latest.c.run_at).desc(), latest.c.key)
+        )
+        return tuple(
+            MetricProgressMetric(key, count, _utc(latest_run_at))
+            for key, count, latest_run_at in values
+        )
+
+    def metric_progress_points(
+        self, project_id: PublicId, metric_key: str
+    ) -> tuple[MetricProgressPoint, ...]:
+        latest = self._latest_progress_rows(project_id, metric_key)
+        rows = self._session.execute(
+            select(latest)
+            .where(latest.c.rank == 1)
+            .order_by(latest.c.run_at, latest.c.experiment_name, latest.c.experiment_public_id)
+        ).mappings()
+        return tuple(
+            MetricProgressPoint(
+                PublicId(ResourceKind.EXPERIMENT, row["experiment_public_id"]),
+                row["experiment_name"],
+                PublicId(ResourceKind.RUN, row["run_public_id"]),
+                row["run_state"],
+                row["value"],
+                _utc(row["run_at"]),
+                row["timestamp_ms"],
+                row["step"],
+            )
+            for row in rows
+        )
+
+    def set_default_progress_metric(
+        self, project_id: PublicId, metric_key: str | None
+    ) -> None:
+        row = self._session.scalar(
+            select(ResearchProjectRow).where(ResearchProjectRow.public_id == str(project_id))
+        )
+        if row is None:
+            raise ValueError("Research Project does not exist")
+        row.default_progress_metric_key = metric_key
+        row.updated_at = datetime.now(UTC)
+
+    def _latest_progress_rows(
+        self, project_id: PublicId, metric_key: str | None = None
+    ) -> Subquery:
+        project_key = self._key(ResearchProjectRow, project_id)
+        run_at = func.coalesce(RunRow.ended_at, RunRow.created_at)
+        statement = select(
+            ExperimentRow.public_id.label("experiment_public_id"),
+            ExperimentRow.name.label("experiment_name"),
+            RunRow.public_id.label("run_public_id"),
+            RunRow.state.label("run_state"),
+            RunMetricRow.key.label("key"),
+            RunMetricRow.value.label("value"),
+            RunMetricRow.timestamp_ms.label("timestamp_ms"),
+            RunMetricRow.step.label("step"),
+            run_at.label("run_at"),
+            func.row_number()
+            .over(
+                partition_by=(ExperimentRow.id, RunMetricRow.key),
+                order_by=(
+                    run_at.desc(),
+                    RunRow.created_at.desc(),
+                    RunRow.public_id.desc(),
+                    RunMetricRow.sequence.desc(),
+                ),
+            )
+            .label("rank"),
+        )
+        statement = statement.join(RunRow, RunRow.id == RunMetricRow.run_id).join(
+            ExperimentRow, ExperimentRow.id == RunRow.experiment_id
+        )
+        statement = statement.where(
+            RunRow.project_id == project_key,
+            ExperimentRow.archived_at.is_(None),
+            RunMetricRow.value < float("inf"),
+            RunMetricRow.value > float("-inf"),
+        )
+        if metric_key is not None:
+            statement = statement.where(RunMetricRow.key == metric_key)
+        return statement.subquery()
 
 
 class SqlAlchemyAttachmentUnitOfWork(SqlAlchemyRunUnitOfWork):

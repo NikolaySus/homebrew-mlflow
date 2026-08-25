@@ -41,6 +41,13 @@ from .memberships import (
     ProjectMembershipService,
     ProjectMembershipView,
 )
+from .metric_progress import (
+    MetricProgressCatalog,
+    MetricProgressMetric,
+    MetricProgressPoint,
+    MetricProgressService,
+    MetricProgressUnitOfWork,
+)
 from .mlflow_sessions import (
     MlflowBrowserSessionService,
     MlflowBrowserSessionStore,
@@ -165,6 +172,11 @@ __all__ = [
     "OrganizationRoleView",
     "ProjectRoleView",
     "MachineCredentialStore",
+    "MetricProgressCatalog",
+    "MetricProgressMetric",
+    "MetricProgressPoint",
+    "MetricProgressService",
+    "MetricProgressUnitOfWork",
     "MembershipUnitOfWork",
     "MlflowBrowserSessionService",
     "MlflowBrowserSessionStore",

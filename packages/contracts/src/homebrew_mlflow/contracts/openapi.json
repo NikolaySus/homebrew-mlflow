@@ -404,6 +404,28 @@
         "responses": {"200": {"description": "Recovered Maintainer membership", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ProjectMembershipResponse"}}}}, "403": {"description": "Organization Admin required", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorEnvelope"}}}}}
       }
     },
+    "/api/v1/projects/{project_id}/metric-progress": {
+      "get": {
+        "operationId": "getProjectMetricProgress", "summary": "List metrics available for active-Experiment progress", "security": [{"bearerAuth": []}],
+        "parameters": [{"name": "project_id", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "responses": {"200": {"description": "Metric progress catalog", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/MetricProgressCatalogResponse"}}}}, "403": {"description": "Project membership required", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorEnvelope"}}}}}
+      }
+    },
+    "/api/v1/projects/{project_id}/metric-progress/points": {
+      "get": {
+        "operationId": "getProjectMetricProgressPoints", "summary": "Get the latest selected metric point for each active Experiment", "security": [{"bearerAuth": []}],
+        "parameters": [{"name": "project_id", "in": "path", "required": true, "schema": {"type": "string"}}, {"name": "metric_key", "in": "query", "required": true, "schema": {"type": "string", "minLength": 1, "maxLength": 250}}],
+        "responses": {"200": {"description": "Metric progress points", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/MetricProgressPointsResponse"}}}}, "403": {"description": "Project membership required", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorEnvelope"}}}}, "409": {"description": "Metric is unavailable", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorEnvelope"}}}}}
+      }
+    },
+    "/api/v1/projects/{project_id}/metric-progress/default": {
+      "put": {
+        "operationId": "setProjectMetricProgressDefault", "summary": "Set or clear the project default Progress metric", "security": [{"bearerAuth": []}],
+        "parameters": [{"name": "project_id", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/SetDefaultMetricRequest"}}}},
+        "responses": {"200": {"description": "Updated metric progress catalog", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/MetricProgressCatalogResponse"}}}}, "403": {"description": "Maintainer required", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorEnvelope"}}}}, "409": {"description": "Metric is unavailable", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorEnvelope"}}}}}
+      }
+    },
     "/api/v1/projects/{project_id}/runs": {
       "get": {
         "operationId": "listProjectRuns", "summary": "List canonical Runs", "security": [{"bearerAuth": []}],
@@ -1204,6 +1226,27 @@
       "MetricInput": {
         "type": "object", "additionalProperties": false, "required": ["key", "value", "timestamp_ms"],
         "properties": {"key": {"type": "string", "minLength": 1, "maxLength": 250}, "value": {"type": "number"}, "timestamp_ms": {"type": "integer", "minimum": 0}, "step": {"type": "integer", "minimum": 0, "default": 0}}
+      },
+      "MetricProgressCatalogResponse": {
+        "type": "object", "additionalProperties": false, "required": ["default_metric_key", "metrics"],
+        "properties": {"default_metric_key": {"type": ["string", "null"]}, "metrics": {"type": "array", "items": {"$ref": "#/components/schemas/MetricProgressMetricResponse"}}}
+      },
+      "MetricProgressMetricResponse": {
+        "type": "object", "additionalProperties": false, "required": ["key", "experiment_count", "latest_run_at"],
+        "properties": {"key": {"type": "string"}, "experiment_count": {"type": "integer", "minimum": 1}, "latest_run_at": {"type": "string", "format": "date-time"}}
+      },
+      "MetricProgressPointResponse": {
+        "type": "object", "additionalProperties": false,
+        "required": ["experiment_id", "experiment_name", "run_id", "run_state", "value", "run_at", "metric_timestamp_ms", "metric_step"],
+        "properties": {"experiment_id": {"type": "string"}, "experiment_name": {"type": "string"}, "run_id": {"type": "string"}, "run_state": {"type": "string"}, "value": {"type": "number"}, "run_at": {"type": "string", "format": "date-time"}, "metric_timestamp_ms": {"type": "integer", "minimum": 0}, "metric_step": {"type": "integer", "minimum": 0}}
+      },
+      "MetricProgressPointsResponse": {
+        "type": "object", "additionalProperties": false, "required": ["metric_key", "points"],
+        "properties": {"metric_key": {"type": "string"}, "points": {"type": "array", "items": {"$ref": "#/components/schemas/MetricProgressPointResponse"}}}
+      },
+      "SetDefaultMetricRequest": {
+        "type": "object", "additionalProperties": false,
+        "properties": {"metric_key": {"type": ["string", "null"], "maxLength": 250}}
       },
       "TagInput": {
         "type": "object", "additionalProperties": false, "required": ["key", "value"],
