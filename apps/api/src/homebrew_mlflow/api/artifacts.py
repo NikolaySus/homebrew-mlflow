@@ -1,19 +1,35 @@
 from __future__ import annotations
 
 import shlex
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
-from homebrew_mlflow.application import AccessTokenClaims, ArtifactCatalogService
+from homebrew_mlflow.application import (
+    AccessTokenClaims,
+    ArtifactArchiveCapacityUnavailable,
+    ArtifactArchiveJob,
+    ArtifactArchiveNotReady,
+    ArtifactArchiveService,
+    ArtifactArchiveState,
+    ArtifactArchiveTooLarge,
+    ArtifactCatalogService,
+)
 from homebrew_mlflow.domain import (
     ArtifactKind,
     PublicId,
     ResourceKind,
     normalize_artifact_alias,
 )
-from homebrew_mlflow.infrastructure import SqlAlchemyArtifactCatalogUnitOfWork, create_session
+from homebrew_mlflow.infrastructure import (
+    S3ArtifactArchiveBuilder,
+    SqlAlchemyArtifactArchiveStore,
+    SqlAlchemyArtifactCatalogUnitOfWork,
+    archive_filename,
+    create_session,
+)
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy.orm import Session
 
 from .security import platform_claims
 from .settings import get_settings
@@ -63,6 +79,12 @@ class ArtifactResponse(BaseModel):
     description: str | None
     created_at: datetime
     archived_at: datetime | None
+
+
+class ArtifactSummaryResponse(ArtifactResponse):
+    active_version_count: int
+    latest_version_sequence: int | None
+    latest_version_published_at: datetime | None
 
 
 class ArtifactVersionResponse(BaseModel):
@@ -129,6 +151,54 @@ class ArtifactConsumptionResponse(BaseModel):
     powershell_commands: list[str]
 
 
+class ArtifactArchiveResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    version_id: str
+    state: ArtifactArchiveState
+    processed_bytes: int
+    total_bytes: int
+    archive_size: int | None
+    created_at: datetime
+    updated_at: datetime
+    expires_at: datetime | None
+    failure_code: str | None
+
+
+class ArtifactArchiveUrlResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    download_url: str
+    expires_at: datetime
+    filename: str
+
+
+def _archive_response(job: ArtifactArchiveJob) -> ArtifactArchiveResponse:
+    return ArtifactArchiveResponse(
+        version_id=str(job.version_id), state=job.state,
+        processed_bytes=job.processed_bytes, total_bytes=job.total_bytes,
+        archive_size=job.archive_size, created_at=job.created_at,
+        updated_at=job.updated_at, expires_at=job.expires_at,
+        failure_code=job.failure_code,
+    )
+
+
+def _archive_service(session: Session) -> ArtifactArchiveService:
+    settings = get_settings()
+    return ArtifactArchiveService(
+        SqlAlchemyArtifactArchiveStore(session),
+        max_bytes=settings.artifact_archive_max_bytes,
+        max_files=settings.artifact_archive_max_files,
+        cache_bytes=settings.artifact_archive_cache_bytes,
+    )
+
+
+def _archive_error(error: Exception) -> HTTPException:
+    if isinstance(error, ArtifactArchiveTooLarge):
+        return HTTPException(status_code=413, detail=str(error))
+    if isinstance(error, (ArtifactArchiveCapacityUnavailable, ArtifactArchiveNotReady)):
+        return HTTPException(status_code=409, detail=str(error))
+    return HTTPException(status_code=404, detail=str(error))
+
+
 def _version_response(version) -> ArtifactVersionResponse:  # type: ignore[no-untyped-def]
     return ArtifactVersionResponse(
         id=str(version.id),
@@ -187,11 +257,14 @@ def create_artifact(
     )
 
 
-@router.get("/api/v1/projects/{project_id}/artifacts", response_model=list[ArtifactResponse])
+@router.get(
+    "/api/v1/projects/{project_id}/artifacts",
+    response_model=list[ArtifactSummaryResponse],
+)
 def list_artifacts(
     project_id: str,
     claims: Annotated[AccessTokenClaims, Depends(platform_claims)],
-) -> list[ArtifactResponse]:
+) -> list[ArtifactSummaryResponse]:
     try:
         parsed_project = PublicId(ResourceKind.PROJECT, project_id)
     except ValueError as error:
@@ -199,18 +272,21 @@ def list_artifacts(
     with create_session(get_settings().database_url) as session:
         artifacts = ArtifactCatalogService(
             SqlAlchemyArtifactCatalogUnitOfWork(session)
-        ).list_artifacts(claims.principal_id, parsed_project)
+        ).list_artifact_summaries(claims.principal_id, parsed_project)
     return [
-        ArtifactResponse(
-            id=str(artifact.id),
-            project_id=str(artifact.owning_project_id),
-            name=artifact.name,
-            kind=artifact.kind,
-            description=artifact.description,
-            created_at=artifact.created_at,
-            archived_at=artifact.archived_at,
+        ArtifactSummaryResponse(
+            id=str(summary.artifact.id),
+            project_id=str(summary.artifact.owning_project_id),
+            name=summary.artifact.name,
+            kind=summary.artifact.kind,
+            description=summary.artifact.description,
+            created_at=summary.artifact.created_at,
+            archived_at=summary.artifact.archived_at,
+            active_version_count=summary.active_version_count,
+            latest_version_sequence=summary.latest_version_sequence,
+            latest_version_published_at=summary.latest_version_published_at,
         )
-        for artifact in artifacts
+        for summary in artifacts
     ]
 
 
@@ -601,6 +677,81 @@ def get_artifact_version_lineage(
         )
         for edge in edges
     ]
+
+
+@router.post(
+    "/api/v1/artifact-versions/{version_id}/archive",
+    response_model=ArtifactArchiveResponse,
+)
+def request_artifact_archive(
+    version_id: str,
+    response: Response,
+    claims: Annotated[AccessTokenClaims, Depends(platform_claims)],
+) -> ArtifactArchiveResponse:
+    try:
+        parsed = PublicId(ResourceKind.ARTIFACT_VERSION, version_id)
+        with create_session(get_settings().database_url) as session:
+            job = _archive_service(session).request(
+                claims.principal_id, parsed, datetime.now(UTC)
+            )
+    except (ValueError, ArtifactArchiveTooLarge, ArtifactArchiveCapacityUnavailable) as error:
+        raise _archive_error(error) from error
+    if job.state in {ArtifactArchiveState.PENDING, ArtifactArchiveState.BUILDING}:
+        response.status_code = 202
+    return _archive_response(job)
+
+
+@router.get(
+    "/api/v1/artifact-versions/{version_id}/archive",
+    response_model=ArtifactArchiveResponse,
+)
+def get_artifact_archive(
+    version_id: str,
+    claims: Annotated[AccessTokenClaims, Depends(platform_claims)],
+) -> ArtifactArchiveResponse:
+    try:
+        parsed = PublicId(ResourceKind.ARTIFACT_VERSION, version_id)
+        with create_session(get_settings().database_url) as session:
+            job = _archive_service(session).status(
+                claims.principal_id, parsed, datetime.now(UTC)
+            )
+    except ValueError as error:
+        raise _archive_error(error) from error
+    return _archive_response(job)
+
+
+@router.post(
+    "/api/v1/artifact-versions/{version_id}/archive-url",
+    response_model=ArtifactArchiveUrlResponse,
+)
+def create_artifact_archive_url(
+    version_id: str,
+    claims: Annotated[AccessTokenClaims, Depends(platform_claims)],
+) -> ArtifactArchiveUrlResponse:
+    settings = get_settings()
+    now = datetime.now(UTC)
+    try:
+        parsed = PublicId(ResourceKind.ARTIFACT_VERSION, version_id)
+        with create_session(settings.database_url) as session:
+            job, source = _archive_service(session).ready(
+                claims.principal_id, parsed, now
+            )
+    except (ValueError, ArtifactArchiveNotReady) as error:
+        raise _archive_error(error) from error
+    filename = archive_filename(source.artifact_name, source.version.sequence)
+    builder = S3ArtifactArchiveBuilder(
+        endpoint_url=str(settings.s3_public_endpoint_url),
+        access_key_id=settings.s3_access_key_id,
+        secret_access_key=settings.s3_secret_access_key.get_secret_value(),
+        destination_bucket=settings.attachment_bucket,
+    )
+    return ArtifactArchiveUrlResponse(
+        download_url=builder.presigned_download(
+            job.object_key or "", filename, settings.artifact_archive_url_seconds
+        ),
+        expires_at=now + timedelta(seconds=settings.artifact_archive_url_seconds),
+        filename=filename,
+    )
 
 
 def _optional_run(value: str | None) -> PublicId | None:

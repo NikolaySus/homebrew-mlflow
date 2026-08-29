@@ -1,8 +1,10 @@
 """Adapters for persistence and external services."""
 
+from .artifact_archives import S3ArtifactArchiveBuilder, archive_filename
 from .attachment_objects import S3AttachmentObjectStore
 from .database import (
     Base,
+    SqlAlchemyArtifactArchiveStore,
     SqlAlchemyArtifactCatalogUnitOfWork,
     SqlAlchemyAttachmentUnitOfWork,
     SqlAlchemyAuditUnitOfWork,
@@ -53,6 +55,9 @@ from .retention import S3RetentionCoordinator
 
 __all__ = [
     "Base",
+    "SqlAlchemyArtifactArchiveStore",
+    "S3ArtifactArchiveBuilder",
+    "archive_filename",
     "SqlAlchemyAuditUnitOfWork",
     "SqlAlchemyArtifactCatalogUnitOfWork",
     "S3AttachmentObjectStore",

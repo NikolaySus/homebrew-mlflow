@@ -7,7 +7,13 @@ from typing import Any, cast
 from uuid import UUID, uuid4
 
 from homebrew_mlflow.application import (
+    ArtifactArchiveFile,
+    ArtifactArchiveJob,
+    ArtifactArchiveSource,
+    ArtifactArchiveState,
+    ArtifactSummary,
     AuditEventView,
+    BuiltArtifactArchive,
     HostedNamespace,
     MetricProgressMetric,
     MetricProgressPoint,
@@ -86,6 +92,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     Uuid,
+    and_,
     create_engine,
     delete,
     func,
@@ -548,6 +555,34 @@ class ArtifactStorageLocationRow(Base):
     bucket: Mapped[str] = mapped_column(String(200), primary_key=True)
     object_key: Mapped[str] = mapped_column(Text, primary_key=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class ArtifactDownloadArchiveRow(Base):
+    __tablename__ = "artifact_download_archives"
+    __table_args__ = (
+        CheckConstraint(
+            "state IN ('pending', 'building', 'ready', 'failed', 'expired')",
+            name="ck_artifact_download_archives_state",
+        ),
+    )
+
+    artifact_version_id: Mapped[UUID] = mapped_column(
+        ForeignKey("artifact_versions.id"), primary_key=True
+    )
+    state: Mapped[str] = mapped_column(String(24), nullable=False, index=True)
+    processed_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    total_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    reserved_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    archive_size: Mapped[int | None] = mapped_column(BigInteger)
+    object_key: Mapped[str | None] = mapped_column(Text)
+    failure_code: Mapped[str | None] = mapped_column(String(100))
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    claimed_by: Mapped[str | None] = mapped_column(String(200))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    ready_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
 
 
 class ArtifactSharingGrantRow(Base):
@@ -2932,6 +2967,52 @@ class SqlAlchemyArtifactCatalogUnitOfWork(SqlAlchemyRepositoryUnitOfWork):
             for row in rows
         )
 
+    def artifact_summaries(self, project_id: PublicId) -> tuple[ArtifactSummary, ...]:
+        project_key = self._project_key(project_id)
+        latest_published = func.max(ArtifactVersionRow.published_at)
+        rows = self._session.execute(
+            select(
+                ArtifactRow,
+                func.count(ArtifactVersionRow.id),
+                func.max(ArtifactVersionRow.sequence),
+                latest_published,
+            )
+            .outerjoin(
+                ArtifactVersionRow,
+                and_(
+                    ArtifactVersionRow.artifact_id == ArtifactRow.id,
+                    ArtifactVersionRow.archived_at.is_(None),
+                ),
+            )
+            .where(
+                ArtifactRow.owning_project_id == project_key,
+                ArtifactRow.archived_at.is_(None),
+            )
+            .group_by(ArtifactRow.id)
+            .order_by(
+                func.coalesce(latest_published, ArtifactRow.created_at).desc(),
+                ArtifactRow.name,
+                ArtifactRow.public_id,
+            )
+        )
+        return tuple(
+            ArtifactSummary(
+                Artifact(
+                    PublicId(ResourceKind.ARTIFACT, row.public_id),
+                    project_id,
+                    row.name,
+                    _utc(row.created_at),
+                    None,
+                    ArtifactKind(row.kind),
+                    row.description,
+                ),
+                int(version_count),
+                int(latest_sequence) if latest_sequence is not None else None,
+                _utc(latest_at) if latest_at is not None else None,
+            )
+            for row, version_count, latest_sequence, latest_at in rows
+        )
+
     def version(self, version_id: PublicId) -> ArtifactVersion | None:
         row = self._session.scalar(
             select(ArtifactVersionRow).where(ArtifactVersionRow.public_id == str(version_id))
@@ -3322,6 +3403,256 @@ class SqlAlchemyArtifactCatalogUnitOfWork(SqlAlchemyRepositoryUnitOfWork):
             ),
             row.model_signature,
             row.model_signature_sha256,
+        )
+
+
+class SqlAlchemyArtifactArchiveStore(SqlAlchemyArtifactCatalogUnitOfWork):
+    """Persistence shared by the request path and isolated archive worker."""
+
+    def archive_source(self, version_id: PublicId) -> ArtifactArchiveSource | None:
+        value = self._session.execute(
+            select(ArtifactVersionRow, ArtifactRow, ArtifactStorageLocationRow)
+            .join(ArtifactRow, ArtifactRow.id == ArtifactVersionRow.artifact_id)
+            .join(
+                ArtifactStorageLocationRow,
+                ArtifactStorageLocationRow.artifact_version_id == ArtifactVersionRow.id,
+            )
+            .where(ArtifactVersionRow.public_id == str(version_id))
+        ).one_or_none()
+        if value is None:
+            return None
+        version_row, artifact_row, location = value
+        version = self._version(version_row)
+        file_rows = tuple(
+            self._session.scalars(
+                select(ArtifactVersionFileRow)
+                .where(ArtifactVersionFileRow.artifact_version_id == version_row.id)
+                .order_by(ArtifactVersionFileRow.path)
+            )
+        )
+        files: list[ArtifactArchiveFile] = []
+        for file_row in file_rows:
+            if file_row.digest is None:
+                return None
+            object_key = location.object_key
+            if version.identity.kind is OutputKind.DIRECTORY:
+                digest = file_row.digest
+                object_key = (
+                    f"dvc/{version.owning_project_id}/files/{version.identity.algorithm}/"
+                    f"{digest[:2]}/{digest[2:]}"
+                )
+            files.append(
+                ArtifactArchiveFile(
+                    file_row.path, file_row.size, file_row.digest, object_key
+                )
+            )
+        return ArtifactArchiveSource(
+            version, artifact_row.name, location.bucket, tuple(files)
+        )
+
+    def archive_job(self, version_id: PublicId) -> ArtifactArchiveJob | None:
+        row = self._archive_row(version_id)
+        return self._archive_job(row, version_id) if row is not None else None
+
+    def reserved_archive_bytes(
+        self, now: datetime, excluding: PublicId | None = None
+    ) -> int:
+        excluded = self._version_key(excluding) if excluding is not None else None
+        query = select(
+            func.coalesce(func.sum(ArtifactDownloadArchiveRow.reserved_bytes), 0)
+        ).where(
+            or_(
+                ArtifactDownloadArchiveRow.state.in_(("pending", "building")),
+                and_(
+                    ArtifactDownloadArchiveRow.state == "ready",
+                    ArtifactDownloadArchiveRow.expires_at > now,
+                ),
+            )
+        )
+        if excluded is not None:
+            query = query.where(
+                ArtifactDownloadArchiveRow.artifact_version_id != excluded
+            )
+        return int(self._session.scalar(query) or 0)
+
+    def queue_archive(
+        self,
+        version_id: PublicId,
+        total_bytes: int,
+        reserved_bytes: int,
+        cache_bytes: int,
+        now: datetime,
+    ) -> None:
+        # Serialize reservations without introducing another service dependency.
+        self._session.execute(select(func.pg_advisory_xact_lock(842_013_209)))
+        key = self._session.scalar(
+            select(ArtifactVersionRow.id)
+            .where(ArtifactVersionRow.public_id == str(version_id))
+            .with_for_update()
+        )
+        if key is None:
+            raise ValueError("Artifact Version does not exist")
+        row = self._session.get(ArtifactDownloadArchiveRow, key)
+        reserved = self.reserved_archive_bytes(now, excluding=version_id)
+        if reserved + reserved_bytes > cache_bytes:
+            from homebrew_mlflow.application import ArtifactArchiveCapacityUnavailable
+
+            raise ArtifactArchiveCapacityUnavailable(
+                "artifact ZIP cache capacity is unavailable"
+            )
+        if row is None:
+            self._session.add(
+                ArtifactDownloadArchiveRow(
+                    artifact_version_id=key,
+                    state="pending",
+                    processed_bytes=0,
+                    total_bytes=total_bytes,
+                    reserved_bytes=reserved_bytes,
+                    attempts=0,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            return
+        row.state = "pending"
+        row.processed_bytes = 0
+        row.total_bytes = total_bytes
+        row.reserved_bytes = reserved_bytes
+        row.archive_size = None
+        row.object_key = None
+        row.failure_code = None
+        row.claimed_by = None
+        row.updated_at = now
+        row.started_at = row.ready_at = row.expires_at = None
+
+    def expired_ready(self, now: datetime) -> tuple[tuple[PublicId, str], ...]:
+        rows = self._session.execute(
+            select(ArtifactVersionRow.public_id, ArtifactDownloadArchiveRow.object_key)
+            .join(ArtifactDownloadArchiveRow)
+            .where(
+                ArtifactDownloadArchiveRow.state == "ready",
+                ArtifactDownloadArchiveRow.expires_at <= now,
+                ArtifactDownloadArchiveRow.object_key.is_not(None),
+            )
+        )
+        return tuple(
+            (PublicId(ResourceKind.ARTIFACT_VERSION, value), key)
+            for value, key in rows
+            if key
+        )
+
+    def mark_expired(self, version_id: PublicId, now: datetime) -> None:
+        row = self._archive_row(version_id)
+        if row is not None:
+            row.state, row.object_key, row.updated_at = "expired", None, now
+            self._session.commit()
+
+    def recover_stale(self, before: datetime, now: datetime) -> int:
+        result = self._session.execute(
+            update(ArtifactDownloadArchiveRow)
+            .where(
+                ArtifactDownloadArchiveRow.state == "building",
+                ArtifactDownloadArchiveRow.updated_at < before,
+            )
+            .values(
+                state="pending",
+                claimed_by=None,
+                updated_at=now,
+                failure_code="worker_recovered",
+            )
+        )
+        self._session.commit()
+        return int(cast(Any, result).rowcount or 0)
+
+    def claim_next(
+        self, worker_id: str, now: datetime
+    ) -> ArtifactArchiveSource | None:
+        row = self._session.scalar(
+            select(ArtifactDownloadArchiveRow)
+            .where(ArtifactDownloadArchiveRow.state == "pending")
+            .order_by(ArtifactDownloadArchiveRow.created_at)
+            .with_for_update(skip_locked=True)
+            .limit(1)
+        )
+        if row is None:
+            return None
+        version_public_id = self._session.scalar(
+            select(ArtifactVersionRow.public_id).where(
+                ArtifactVersionRow.id == row.artifact_version_id
+            )
+        )
+        if version_public_id is None:
+            raise RuntimeError("Archive job references a missing Artifact Version")
+        row.state = "building"
+        row.claimed_by = worker_id
+        row.started_at = row.updated_at = now
+        row.attempts += 1
+        self._session.commit()
+        return self.archive_source(
+            PublicId(ResourceKind.ARTIFACT_VERSION, version_public_id)
+        )
+
+    def update_progress(
+        self, version_id: PublicId, processed_bytes: int, now: datetime
+    ) -> None:
+        row = self._archive_row(version_id)
+        if row is not None:
+            row.processed_bytes, row.updated_at = processed_bytes, now
+            self._session.commit()
+
+    def complete(
+        self,
+        version_id: PublicId,
+        built: BuiltArtifactArchive,
+        expires_at: datetime,
+        now: datetime,
+    ) -> None:
+        row = self._archive_row(version_id)
+        if row is None:
+            raise ValueError("Archive job does not exist")
+        row.state, row.processed_bytes = "ready", row.total_bytes
+        row.archive_size, row.object_key = built.size, built.object_key
+        row.ready_at, row.expires_at, row.updated_at = now, expires_at, now
+        row.failure_code = None
+        self._session.commit()
+
+    def fail(self, version_id: PublicId, failure_code: str, now: datetime) -> None:
+        row = self._archive_row(version_id)
+        if row is not None:
+            row.state = "failed"
+            row.failure_code = failure_code[:100]
+            row.updated_at = now
+            row.claimed_by = None
+            self._session.commit()
+
+    def _archive_row(
+        self, version_id: PublicId
+    ) -> ArtifactDownloadArchiveRow | None:
+        key = self._version_key(version_id)
+        return self._session.get(ArtifactDownloadArchiveRow, key) if key else None
+
+    def _version_key(self, version_id: PublicId) -> UUID | None:
+        return self._session.scalar(
+            select(ArtifactVersionRow.id).where(
+                ArtifactVersionRow.public_id == str(version_id)
+            )
+        )
+
+    @staticmethod
+    def _archive_job(
+        row: ArtifactDownloadArchiveRow, version_id: PublicId
+    ) -> ArtifactArchiveJob:
+        return ArtifactArchiveJob(
+            version_id,
+            ArtifactArchiveState(row.state),
+            row.processed_bytes,
+            row.total_bytes,
+            row.archive_size,
+            row.object_key,
+            _utc(row.created_at),
+            _utc(row.updated_at),
+            _utc(row.expires_at) if row.expires_at else None,
+            row.failure_code,
         )
 
 

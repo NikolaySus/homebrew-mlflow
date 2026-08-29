@@ -82,6 +82,9 @@ type Artifact = {
   kind: ArtifactKind;
   description: string | null;
   created_at: string;
+  active_version_count: number;
+  latest_version_sequence: number | null;
+  latest_version_published_at: string | null;
 };
 type ArtifactAlias = { alias: string; artifact_version_id: string };
 type Version = {
@@ -103,6 +106,14 @@ type Version = {
   model_signature_sha256: string | null;
 };
 type ArtifactFile = { path: string; size: number; digest: string | null };
+type ArtifactArchive = {
+  version_id: string;
+  state: "pending" | "building" | "ready" | "failed" | "expired";
+  processed_bytes: number;
+  total_bytes: number;
+  archive_size: number | null;
+  failure_code: string | null;
+};
 type Lineage = {
   id: string;
   source_artifact_version_id: string;
@@ -358,19 +369,20 @@ export function ProjectChooser({ hasProjects, installCommand, installAvailable }
 
 type DatedRecord = { created_at: string };
 
-export function CompactMetadataList<T extends DatedRecord>({ items, label, getItemId, renderItem }: {
+export function CompactMetadataList<T extends DatedRecord>({ items, label, getItemId, getSortTimestamp, renderItem }: {
   items: T[];
   label: string;
   getItemId: (item: T) => string;
+  getSortTimestamp?: (item: T) => string;
   renderItem: (item: T) => React.ReactNode;
 }) {
   const [expanded, setExpanded] = useState(false);
   const sorted = useMemo(() => [...items].sort((left, right) => {
-    const leftTime = Date.parse(left.created_at);
-    const rightTime = Date.parse(right.created_at);
+    const leftTime = Date.parse(getSortTimestamp?.(left) ?? left.created_at);
+    const rightTime = Date.parse(getSortTimestamp?.(right) ?? right.created_at);
     const timestampOrder = (Number.isNaN(rightTime) ? 0 : rightTime) - (Number.isNaN(leftTime) ? 0 : leftTime);
     return timestampOrder || getItemId(right).localeCompare(getItemId(left));
-  }), [getItemId, items]);
+  }), [getItemId, getSortTimestamp, items]);
   const hasMore = sorted.length > 2;
   const visible = expanded ? sorted : sorted.slice(0, 2);
   return (
@@ -502,6 +514,7 @@ export function App() {
   );
   const [artifactKind, setArtifactKind] = useState<ArtifactKind | "all">("all");
   const [artifactAliases, setArtifactAliases] = useState<ArtifactAlias[]>([]);
+  const [artifactArchives, setArtifactArchives] = useState<Record<string, ArtifactArchive>>({});
   const [version, setVersion] = useState<Version | null>(null);
   const [files, setFiles] = useState<ArtifactFile[]>([]);
   const [lineage, setLineage] = useState<Lineage[]>([]);
@@ -1154,6 +1167,34 @@ export function App() {
       setArtifactAliases(
         await request(`/api/v1/artifacts/${artifactId}/aliases`),
       );
+    } catch (value) {
+      showError(value);
+    }
+  }
+
+  async function downloadArtifactVersion(value: Version) {
+    try {
+      let job = await request<ArtifactArchive>(
+        `/api/v1/artifact-versions/${value.id}/archive`, { method: "POST" },
+      );
+      setArtifactArchives((current) => ({ ...current, [value.id]: job }));
+      while (job.state === "pending" || job.state === "building") {
+        await new Promise((resolve) => window.setTimeout(resolve, 1500));
+        job = await request<ArtifactArchive>(`/api/v1/artifact-versions/${value.id}/archive`);
+        setArtifactArchives((current) => ({ ...current, [value.id]: job }));
+      }
+      if (job.state !== "ready") {
+        throw new Error(job.failure_code ? `Archive failed: ${job.failure_code}` : "Archive is not ready");
+      }
+      const result = await request<{ download_url: string; filename: string }>(
+        `/api/v1/artifact-versions/${value.id}/archive-url`, { method: "POST" },
+      );
+      const link = document.createElement("a");
+      link.href = result.download_url;
+      link.download = result.filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
     } catch (value) {
       showError(value);
     }
@@ -2105,8 +2146,12 @@ export function App() {
                       items={artifacts.filter((artifact) => artifactKind === "all" || artifact.kind === artifactKind)}
                       label="artifacts"
                       getItemId={(artifact) => artifact.id}
+                      getSortTimestamp={(artifact) => artifact.latest_version_published_at ?? artifact.created_at}
                       renderItem={(artifact) => {
-                        const summary = `${new Date(artifact.created_at).toLocaleString()}${artifact.description ? ` · ${artifact.description}` : ""}`;
+                        const latest = artifact.latest_version_published_at
+                          ? `Latest v${artifact.latest_version_sequence} published ${new Date(artifact.latest_version_published_at).toLocaleString()}`
+                          : `Created ${new Date(artifact.created_at).toLocaleString()}`;
+                        const summary = `${artifact.active_version_count.toLocaleString()} active version${artifact.active_version_count === 1 ? "" : "s"} · ${latest}${artifact.description ? ` · ${artifact.description}` : ""}`;
                         return (
                           <button
                             key={artifact.id}
@@ -2143,7 +2188,7 @@ export function App() {
                         >
                           <div>
                             <strong>Version {value.sequence}</strong>
-                            <span className="verified">{value.integrity}</span>
+                            <span className="verified">{value.integrity} · {value.availability}</span>
                           </div>
                           <code>
                             {value.algorithm}:{value.digest}
@@ -2153,6 +2198,22 @@ export function App() {
                             {value.file_count.toLocaleString()} files ·{" "}
                             {formatBytes(value.size)}
                           </p>
+                          <small>Published {new Date(value.published_at).toLocaleString()}</small>
+                          <div className="versionActions">
+                            <button
+                              type="button"
+                              disabled={["pending", "building"].includes(artifactArchives[value.id]?.state)}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                void downloadArtifactVersion(value);
+                              }}
+                            >
+                              {artifactArchives[value.id]?.state === "failed" ? "Retry ZIP" : "Download ZIP"}
+                            </button>
+                            {artifactArchives[value.id] && ["pending", "building"].includes(artifactArchives[value.id].state) && (
+                              <span>{artifactArchives[value.id].state} {Math.round(100 * artifactArchives[value.id].processed_bytes / Math.max(1, artifactArchives[value.id].total_bytes))}%</span>
+                            )}
+                          </div>
                         </article>
                       ))}
                     </div>

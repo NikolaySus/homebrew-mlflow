@@ -23,6 +23,14 @@ from .publication_worker import ValidatedFile
 from .retention import RetentionDependencies
 
 
+@dataclass(frozen=True, slots=True)
+class ArtifactSummary:
+    artifact: Artifact
+    active_version_count: int
+    latest_version_sequence: int | None
+    latest_version_published_at: datetime | None
+
+
 class ArtifactCatalogUnitOfWork(Protocol):
     def project_role(self, project_id: PublicId, principal_id: PublicId) -> ProjectRole | None: ...
 
@@ -33,6 +41,8 @@ class ArtifactCatalogUnitOfWork(Protocol):
     def add_artifact(self, artifact: Artifact) -> None: ...
 
     def artifacts(self, project_id: PublicId) -> tuple[Artifact, ...]: ...
+
+    def artifact_summaries(self, project_id: PublicId) -> tuple[ArtifactSummary, ...]: ...
 
     def version(self, version_id: PublicId) -> ArtifactVersion | None: ...
 
@@ -121,11 +131,21 @@ class ArtifactCatalogService:
         self._uow.commit()
         return artifact
 
-    def list_artifacts(self, actor_id: PublicId, project_id: PublicId) -> tuple[Artifact, ...]:
+    def list_artifacts(
+        self, actor_id: PublicId, project_id: PublicId
+    ) -> tuple[Artifact, ...]:
         role = self._uow.project_role(project_id, actor_id)
         if role is None or not permits(role, MachineScope.READ):
             raise AuthorizationDenied("project membership is required")
         return self._uow.artifacts(project_id)
+
+    def list_artifact_summaries(
+        self, actor_id: PublicId, project_id: PublicId
+    ) -> tuple[ArtifactSummary, ...]:
+        role = self._uow.project_role(project_id, actor_id)
+        if role is None or not permits(role, MachineScope.READ):
+            raise AuthorizationDenied("project membership is required")
+        return self._uow.artifact_summaries(project_id)
 
     def update(
         self,

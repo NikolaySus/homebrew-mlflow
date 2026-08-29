@@ -6,6 +6,7 @@ dependencies = ["homebrew-mlflow-application", "homebrew-mlflow-infrastructure"]
 
 [project.scripts]
 homebrew-mlflow-worker = "homebrew_mlflow.worker.main:run"
+homebrew-mlflow-archive-worker = "homebrew_mlflow.worker.archive_main:run"
 
 [build-system]
 requires = ["hatchling"]

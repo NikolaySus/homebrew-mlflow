@@ -125,6 +125,9 @@ Recommended default technology choices:
 - Pydantic or generated contract models at the API/configuration boundaries.
 - PostgreSQL for all canonical metadata, audit records, durable operations, and operation-event replay.
 - A PostgreSQL-backed worker queue using transactional claiming/`SKIP LOCKED` semantics for v1; do not add Redis solely for job dispatch.
+- Full browser downloads are prepared by an isolated archive worker as uncompressed Zip64 multipart
+  uploads. Jobs are durable, tenant-authorized, limited to 5 GiB and 100,000 files, share a 10 GiB
+  reservation budget, retain completed archives for 24 hours, and issue 15-minute presigned URLs.
 - S3-compatible object storage for DVC objects and policy-limited Run attachments.
 - GitLab, Infisical, and MinIO/equivalent as external deployed products, accessed through adapters.
 - A typed web client generated from the OpenAPI contract. A TypeScript SPA is recommended, but the HTTP/domain contracts do not depend on a specific UI framework.
